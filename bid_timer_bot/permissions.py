@@ -17,6 +17,10 @@ _CACHE_TTL = 120
 
 async def _is_chat_staff(bot, chat_id: int, user_id: int) -> bool:
     """Владелец или администратор группы — доступ автоматически."""
+    # В ЛС пользователь всегда хозяин
+    if chat_id > 0 or chat_id == user_id:
+        return True
+
     now = int(time.time())
     key = (chat_id, user_id)
     cached = _admin_cache.get(key)
@@ -26,7 +30,12 @@ async def _is_chat_staff(bot, chat_id: int, user_id: int) -> bool:
         member = await bot.get_chat_member(chat_id, user_id)
         is_staff = member.status in ("creator", "administrator")
     except Exception:
-        is_staff = False
+        # Резервный вариант: получить список всех администраторов
+        try:
+            admins = await bot.get_chat_administrators(chat_id)
+            is_staff = any(admin.user.id == user_id for admin in admins)
+        except Exception:
+            is_staff = False
     _admin_cache[key] = (is_staff, now + _CACHE_TTL)
     return is_staff
 
@@ -40,6 +49,10 @@ async def can_manage(bot, chat_id: int, user: User) -> bool:
 
 
 async def deny_if_cannot_manage(message: Message) -> bool:
+    # Если сообщение отправлено от имени самого чата (анонимный администратор)
+    if message.sender_chat and message.sender_chat.id == message.chat.id:
+        return False
+
     user = message.from_user
     if not user:
         await message.reply(phrases.card("Ошибка", "Не удалось определить отправителя."))

@@ -10,7 +10,7 @@ from typing import Awaitable, Callable, Optional
 
 from aiogram import F, Router
 from aiogram.filters import Command, ChatMemberUpdatedFilter, IS_MEMBER, IS_NOT_MEMBER
-from aiogram.types import ChatMemberUpdated, Message
+from aiogram.types import ChatMemberUpdated, Message, FSInputFile
 
 import database as db
 import permissions
@@ -68,7 +68,15 @@ async def on_bot_added(event: ChatMemberUpdated) -> None:
     chat_id = event.chat.id
     await db.get_chat_state(chat_id)
     paid = await stars.fetch_paid_stars(event.bot, chat_id, force=True)
-    await event.answer(phrases.welcome(paid))
+    try:
+        banner = FSInputFile("assets/welcome_banner.png")
+        await event.bot.send_photo(
+            chat_id=chat_id,
+            photo=banner,
+            caption=phrases.welcome(paid)
+        )
+    except Exception:
+        await event.answer(phrases.welcome(paid))
     log.info("Bot added to chat=%s stars=%s", chat_id, paid)
 
 
@@ -88,7 +96,14 @@ async def on_paid_price_changed(message: Message) -> None:
 async def _help(message: Message, _: str) -> None:
     if await permissions.deny_if_cannot_manage(message):
         return
-    await message.answer(phrases.help_text())
+    try:
+        banner = FSInputFile("assets/welcome_banner.png")
+        await message.answer_photo(
+            banner,
+            caption=phrases.help_text(),
+        )
+    except Exception:
+        await message.answer(phrases.help_text())
 
 
 async def _status(message: Message, _: str) -> None:
@@ -337,20 +352,27 @@ async def cmd_managers_legacy(message: Message) -> None:
 # ── ОПРЕДЕЛЕНИЕ СТАВКИ ──────────────────────────────────────────────────────
 
 def _is_paid_bid(message: Message) -> bool:
-    """Проверяем несколько атрибутов — совместимость с разными версиями Bot API."""
-    # aiogram 3.17+ использует paid_star_count
+    """Проверяем несколько атрибутов — совместимость с разными версиями Bot API.
+
+    aiogram 3.17+ может иметь:
+      - message.paid_star_count  (Bot API 8.x+)
+      - message.paid_message_star_count  (старые Bot API)
+      - successful_payment
+    """
     for attr in ("paid_star_count", "paid_message_star_count"):
         val = getattr(message, attr, None)
         if val is not None and int(val) > 0:
-            log.debug(
-                "Paid bid detected: chat=%s user=%s attr=%s val=%s",
-                message.chat.id, message.from_user.id if message.from_user else "?",
+            log.info(
+                "PAID BID: chat=%s user=%s attr=%s val=%s text=%r",
+                message.chat.id,
+                message.from_user.id if message.from_user else "?",
                 attr, val,
+                (message.text or "")[:50],
             )
             return True
     # Проверяем successful_payment (для некоторых типов Stars-платежей)
     if getattr(message, "successful_payment", None) is not None:
-        log.debug("Paid bid via successful_payment: chat=%s", message.chat.id)
+        log.info("PAID BID via successful_payment: chat=%s", message.chat.id)
         return True
     return False
 
@@ -371,26 +393,7 @@ async def on_any_message(message: Message) -> None:
     if message.paid_message_price_changed:
         return
 
-    # Если это потенциально платное сообщение — форсим обновление кэша
-    is_potentially_paid = _is_paid_bid(message)
-
-    paid_stars = await stars.fetch_paid_stars(
-        message.bot, message.chat.id,
-        force=is_potentially_paid,  # Force refresh при платном сообщении
-    )
-    if not stars.stars_enabled(paid_stars):
-        # Если сообщение платное, но Stars не обнаружены — пробуем force
-        if is_potentially_paid:
-            paid_stars = await stars.fetch_paid_stars(message.bot, message.chat.id, force=True)
-            if not stars.stars_enabled(paid_stars):
-                log.warning(
-                    "Paid message received but Stars not enabled. chat=%s paid_stars=%s",
-                    message.chat.id, paid_stars,
-                )
-                return
-        else:
-            return
-
+    # 1. Проверяем, запущен ли раунд
     state = await db.get_chat_state(message.chat.id)
     if not state.is_running:
         return
@@ -404,12 +407,20 @@ async def on_any_message(message: Message) -> None:
 
     mode = state.trigger_mode
     is_bid = False
+    is_potentially_paid = _is_paid_bid(message)
+
     if mode in ("paid", "both") and is_potentially_paid:
         is_bid = True
     if not is_bid and mode in ("regex", "both") and _is_regex_bid(message, state):
         is_bid = True
+
     if not is_bid:
         return
+
+    log.info(
+        "BID ACCEPTED: chat=%s user=%s (%s) mode=%s paid=%s",
+        message.chat.id, user.id, user.username or "?", mode, is_potentially_paid,
+    )
 
     end_at = await scheduler.reset_round_on_bid(
         message.bot,
