@@ -1,0 +1,50 @@
+"""BidTimerBot — автоматические права без настройки Railway."""
+
+from __future__ import annotations
+
+import time
+from typing import Dict, Tuple
+
+from aiogram.types import Message, User
+
+import database as db
+import phrases
+
+# (chat_id, user_id) -> (is_admin, expires_at)
+_admin_cache: Dict[Tuple[int, int], Tuple[bool, int]] = {}
+_CACHE_TTL = 120
+
+
+async def _is_chat_staff(bot, chat_id: int, user_id: int) -> bool:
+    """Владелец или администратор группы — доступ автоматически."""
+    now = int(time.time())
+    key = (chat_id, user_id)
+    cached = _admin_cache.get(key)
+    if cached and cached[1] > now:
+        return cached[0]
+    try:
+        member = await bot.get_chat_member(chat_id, user_id)
+        is_staff = member.status in ("creator", "administrator")
+    except Exception:
+        is_staff = False
+    _admin_cache[key] = (is_staff, now + _CACHE_TTL)
+    return is_staff
+
+
+async def can_manage(bot, chat_id: int, user: User) -> bool:
+    if await _is_chat_staff(bot, chat_id, user.id):
+        return True
+    if await db.is_chat_manager(chat_id, user.id, user.username):
+        return True
+    return False
+
+
+async def deny_if_cannot_manage(message: Message) -> bool:
+    user = message.from_user
+    if not user:
+        await message.reply(phrases.card("Ошибка", "Не удалось определить отправителя."))
+        return True
+    if await can_manage(message.bot, message.chat.id, user):
+        return False
+    await message.reply(phrases.access_denied())
+    return True
