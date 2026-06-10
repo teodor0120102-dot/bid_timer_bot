@@ -25,6 +25,8 @@ router = Router(name="bid_timer")
 
 Handler = Callable[[Message, str], Awaitable[None]]
 BROADCAST_ADMIN_ID = 1206238888
+SERVICE_DELETE_SECONDS = 60
+COMMAND_DELETE_SECONDS = 5
 
 
 def _format_remaining(end_at_unix: Optional[int]) -> str:
@@ -36,7 +38,7 @@ def _format_remaining(end_at_unix: Optional[int]) -> str:
 async def _require_stars(message: Message) -> Optional[int]:
     paid = await stars.fetch_paid_stars(message.bot, message.chat.id)
     if not stars.stars_enabled(paid):
-        await message.reply(phrases.stars_required())
+        await _reply_temp(message, phrases.stars_required())
         return None
     return paid
 
@@ -115,6 +117,40 @@ async def _edit_or_send_bid_panel(message: Message, state: db.ChatState, text: s
     return msg.message_id
 
 
+async def _delete_later(message: Message, delay: int = SERVICE_DELETE_SECONDS) -> None:
+    await asyncio.sleep(delay)
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+
+def _schedule_delete(message: Optional[Message], delay: int = SERVICE_DELETE_SECONDS) -> None:
+    if not message:
+        return
+    try:
+        asyncio.create_task(_delete_later(message, delay))
+    except RuntimeError:
+        pass
+
+
+async def _answer_temp(message: Message, text: str, **kwargs) -> Message:
+    sent = await message.answer(text, **kwargs)
+    _schedule_delete(sent)
+    return sent
+
+
+async def _reply_temp(message: Message, text: str, **kwargs) -> Message:
+    sent = await message.reply(text, **kwargs)
+    _schedule_delete(sent)
+    return sent
+
+
+def _cleanup_command(message: Message) -> None:
+    if getattr(message.chat, "type", None) != "private":
+        _schedule_delete(message, COMMAND_DELETE_SECONDS)
+
+
 @router.my_chat_member(ChatMemberUpdatedFilter(IS_MEMBER >> IS_NOT_MEMBER))
 async def on_bot_removed(event: ChatMemberUpdated) -> None:
     await scheduler.stop_round(event.chat.id)
@@ -147,7 +183,7 @@ async def on_paid_price_changed(message: Message) -> None:
     await db.update_chat_state(message.chat.id, paid_message_star_count=count)
     if not stars.stars_enabled(count):
         await scheduler.stop_round(message.chat.id)
-        await message.answer(phrases.stars_disabled())
+        await _answer_temp(message, phrases.stars_disabled())
 
 
 async def _help(message: Message, _: str) -> None:
@@ -155,12 +191,13 @@ async def _help(message: Message, _: str) -> None:
         return
     try:
         banner = FSInputFile("assets/welcome_banner.png")
-        await message.answer_photo(
+        sent = await message.answer_photo(
             banner,
             caption=phrases.help_text(),
         )
+        _schedule_delete(sent)
     except Exception:
-        await message.answer(phrases.help_text())
+        await _answer_temp(message, phrases.help_text())
 
 
 async def _status(message: Message, _: str) -> None:
@@ -175,7 +212,8 @@ async def _status(message: Message, _: str) -> None:
             mgr_lines.append(f"@{html.escape(uname)}")
         elif uid:
             mgr_lines.append(f"<code>{uid}</code>")
-    await message.answer(
+    await _answer_temp(
+        message,
         phrases.status(
             stars=paid,
             stars_on=stars.stars_enabled(paid),
@@ -213,18 +251,18 @@ async def _stop(message: Message, _: str) -> None:
         pass
     await scheduler.stop_round(message.chat.id)
     await db.update_chat_state(message.chat.id, clear_last_bid_message=True)
-    await message.answer(phrases.stopped())
+    await _answer_temp(message, phrases.stopped())
 
 
 async def _time(message: Message, arg: str) -> None:
     if await permissions.deny_if_cannot_manage(message):
         return
     if not arg.strip().isdigit():
-        await message.answer(phrases.card("Подсказка", "Пример: <code>/bid time 150</code>"))
+        await _answer_temp(message, phrases.card("Подсказка", "Пример: <code>/bid time 150</code>"))
         return
     seconds = int(arg.strip())
     if seconds < 5 or seconds > 86400:
-        await message.answer(phrases.card("Ошибка", "Допустимо от 5 до 86400 секунд."))
+        await _answer_temp(message, phrases.card("Ошибка", "Допустимо от 5 до 86400 секунд."))
         return
 
     state = await db.get_chat_state(message.chat.id)
@@ -247,7 +285,8 @@ async def _time(message: Message, arg: str) -> None:
             scheduler.run_timer(message.bot, message.chat.id, new_end, seconds),
         )
         await scheduler.update_status_now(message.bot, message.chat.id, new_end, seconds)
-        await message.answer(
+        await _answer_temp(
+            message,
             phrases.card(
                 "⏱ Время изменено на лету",
                 f"Было: <b>{phrases.format_time(old_remaining)}</b> осталось\n"
@@ -258,7 +297,7 @@ async def _time(message: Message, arg: str) -> None:
         log.info("Time changed mid-round chat=%s new_sec=%s by=%s", message.chat.id, seconds, message.from_user.id)
     else:
         await db.update_chat_state(message.chat.id, duration_seconds=seconds)
-        await message.answer(phrases.setting_time(seconds))
+        await _answer_temp(message, phrases.setting_time(seconds))
 
 
 async def _regex(message: Message, arg: str) -> None:
@@ -266,15 +305,15 @@ async def _regex(message: Message, arg: str) -> None:
         return
     pattern = arg.strip()
     if not pattern:
-        await message.answer(phrases.card("Подсказка", "Пример: <code>/bid regex перебил</code>"))
+        await _answer_temp(message, phrases.card("Подсказка", "Пример: <code>/bid regex перебил</code>"))
         return
     try:
         re.compile(pattern, flags=re.IGNORECASE)
     except re.error as e:
-        await message.answer(phrases.card("Ошибка", f"Regex невалиден: {e}"))
+        await _answer_temp(message, phrases.card("Ошибка", f"Regex невалиден: {e}"))
         return
     await db.update_chat_state(message.chat.id, trigger_regex=pattern)
-    await message.answer(phrases.setting_regex(pattern))
+    await _answer_temp(message, phrases.setting_regex(pattern))
 
 
 async def _mode(message: Message, arg: str) -> None:
@@ -282,7 +321,7 @@ async def _mode(message: Message, arg: str) -> None:
         return
     mode = arg.strip().lower()
     if mode not in ("paid", "regex", "both"):
-        await message.answer(phrases.card("Режимы", "<code>paid</code> · <code>regex</code> · <code>both</code>"))
+        await _answer_temp(message, phrases.card("Режимы", "<code>paid</code> · <code>regex</code> · <code>both</code>"))
         return
     await db.update_chat_state(message.chat.id, trigger_mode=mode)
     hints = {
@@ -290,7 +329,7 @@ async def _mode(message: Message, arg: str) -> None:
         "regex": "Ставка — текст по заданному шаблону",
         "both": "Ставка — платное сообщение или совпадение с шаблоном",
     }
-    await message.answer(phrases.setting_mode(mode, hints[mode]))
+    await _answer_temp(message, phrases.setting_mode(mode, hints[mode]))
 
 
 async def _add(message: Message, arg: str) -> None:
@@ -298,7 +337,8 @@ async def _add(message: Message, arg: str) -> None:
         return
     user_id, username = _target_from_message(message, arg)
     if user_id is None and not username:
-        await message.answer(
+        await _answer_temp(
+            message,
             phrases.card(
                 "Добавить менеджера",
                 "Ответьте на сообщение: <code>/bid add</code>\n"
@@ -308,7 +348,7 @@ async def _add(message: Message, arg: str) -> None:
         return
     await db.add_chat_manager(message.chat.id, user_id=user_id, username=username)
     label = f"@{username}" if username else f"id {user_id}"
-    await message.answer(phrases.manager_added(label))
+    await _answer_temp(message, phrases.manager_added(label))
 
 
 async def _del(message: Message, arg: str) -> None:
@@ -316,11 +356,11 @@ async def _del(message: Message, arg: str) -> None:
         return
     user_id, username = _target_from_message(message, arg)
     if user_id is None and not username:
-        await message.answer(phrases.card("Подсказка", "Пример: <code>/bid del @username</code>"))
+        await _answer_temp(message, phrases.card("Подсказка", "Пример: <code>/bid del @username</code>"))
         return
     await db.remove_chat_manager(message.chat.id, user_id=user_id, username=username)
     label = f"@{username}" if username else f"id {user_id}"
-    await message.answer(phrases.manager_removed(label))
+    await _answer_temp(message, phrases.manager_removed(label))
 
 
 async def _managers(message: Message, _: str) -> None:
@@ -333,7 +373,7 @@ async def _managers(message: Message, _: str) -> None:
             lines.append(f"▸ @{html.escape(uname)}")
         elif uid:
             lines.append(f"▸ id <code>{uid}</code>")
-    await message.answer(phrases.managers_list("\n".join(lines)))
+    await _answer_temp(message, phrases.managers_list("\n".join(lines)))
 
 
 _BID_HANDLERS: dict[str, Handler] = {
@@ -352,6 +392,7 @@ _BID_HANDLERS: dict[str, Handler] = {
 
 @router.message(Command("bid", ignore_case=True))
 async def cmd_bid(message: Message) -> None:
+    _cleanup_command(message)
     sub, rest = _bid_args(message)
     handler = _BID_HANDLERS.get(sub, _help)
     await handler(message, rest)
@@ -359,57 +400,67 @@ async def cmd_bid(message: Message) -> None:
 
 @router.message(Command("timer_help", "help", ignore_case=True))
 async def cmd_help_legacy(message: Message) -> None:
+    _cleanup_command(message)
     await _help(message, "")
 
 
 @router.message(Command("timer_status", "status", ignore_case=True))
 async def cmd_status_legacy(message: Message) -> None:
+    _cleanup_command(message)
     await _status(message, "")
 
 
 @router.message(Command("timer_start", "start", "t", "go", "старт", ignore_case=True))
 async def cmd_start_legacy(message: Message) -> None:
+    _cleanup_command(message)
     parts = (message.text or "").split(maxsplit=1)
     await _start(message, parts[1] if len(parts) > 1 else "")
 
 
 @router.message(Command("timer_stop", "stop", "стоп", ignore_case=True))
 async def cmd_stop_legacy(message: Message) -> None:
+    _cleanup_command(message)
     await _stop(message, "")
 
 
 @router.message(Command("timer_set_seconds", ignore_case=True))
 async def cmd_time_legacy(message: Message) -> None:
+    _cleanup_command(message)
     parts = (message.text or "").split(maxsplit=1)
     await _time(message, parts[1] if len(parts) > 1 else "")
 
 
 @router.message(Command("timer_set_regex", ignore_case=True))
 async def cmd_regex_legacy(message: Message) -> None:
+    _cleanup_command(message)
     parts = (message.text or "").split(maxsplit=1)
     await _regex(message, parts[1] if len(parts) > 1 else "")
 
 
 @router.message(Command("timer_mode", ignore_case=True))
 async def cmd_mode_legacy(message: Message) -> None:
+    _cleanup_command(message)
     parts = (message.text or "").split(maxsplit=1)
     await _mode(message, parts[1] if len(parts) > 1 else "")
 
 
 @router.message(Command("timer_add", "bid_add", ignore_case=True))
 async def cmd_add_legacy(message: Message) -> None:
+    _cleanup_command(message)
     parts = (message.text or "").split(maxsplit=1)
     await _add(message, parts[1] if len(parts) > 1 else "")
 
 
 @router.message(Command("timer_del", "timer_remove", "bid_del", ignore_case=True))
 async def cmd_del_legacy(message: Message) -> None:
+    _cleanup_command(message)
     parts = (message.text or "").split(maxsplit=1)
     await _del(message, parts[1] if len(parts) > 1 else "")
 
 
 @router.message(Command("timer_managers", "bid_managers", ignore_case=True))
 async def cmd_managers_legacy(message: Message) -> None:
+    _cleanup_command(message)
     await _managers(message, "")
 
 
@@ -521,6 +572,8 @@ async def cmd_broadcast(message: Message) -> None:
 @router.message()
 async def on_any_message(message: Message) -> None:
     if message.paid_message_price_changed:
+        return
+    if not scheduler.timers.is_active(message.chat.id):
         return
 
     state = await db.get_chat_state(message.chat.id)

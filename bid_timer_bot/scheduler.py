@@ -41,6 +41,10 @@ class ChatTimers:
         self.cancel(chat_id)
         self._tasks[chat_id] = asyncio.create_task(coro)
 
+    def is_active(self, chat_id: int) -> bool:
+        task = self._tasks.get(chat_id)
+        return bool(task and not task.done())
+
 
 timers = ChatTimers()
 

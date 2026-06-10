@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Dict, Tuple
 
@@ -55,9 +56,25 @@ async def deny_if_cannot_manage(message: Message) -> bool:
 
     user = message.from_user
     if not user:
-        await message.reply(phrases.card("Ошибка", "Не удалось определить отправителя."))
+        sent = await message.reply(phrases.card("Ошибка", "Не удалось определить отправителя."))
+        _delete_later(sent)
         return True
     if await can_manage(message.bot, message.chat.id, user):
         return False
-    await message.reply(phrases.access_denied())
+    sent = await message.reply(phrases.access_denied())
+    _delete_later(sent)
     return True
+
+
+def _delete_later(message: Message, delay: int = 60) -> None:
+    async def runner() -> None:
+        await asyncio.sleep(delay)
+        try:
+            await message.delete()
+        except Exception:
+            pass
+
+    try:
+        asyncio.create_task(runner())
+    except RuntimeError:
+        pass

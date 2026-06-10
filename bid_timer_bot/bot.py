@@ -29,6 +29,13 @@ log = logging.getLogger("bidtimer")
 
 
 class RecipientTrackerMiddleware(BaseMiddleware):
+    CHAT_WRITE_TTL = 600
+    USER_WRITE_TTL = 600
+
+    def __init__(self) -> None:
+        self._seen_chats: dict[int, float] = {}
+        self._seen_users: dict[int, float] = {}
+
     async def __call__(
         self,
         handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
@@ -44,6 +51,7 @@ class RecipientTrackerMiddleware(BaseMiddleware):
     async def _remember(self, event: TelegramObject) -> None:
         chat = None
         user = None
+        now = asyncio.get_running_loop().time()
 
         if isinstance(event, Message):
             chat = event.chat
@@ -56,14 +64,16 @@ class RecipientTrackerMiddleware(BaseMiddleware):
             chat = event.chat
             user = event.from_user
 
-        if chat:
+        if chat and self._seen_chats.get(chat.id, 0) <= now:
+            self._seen_chats[chat.id] = now + self.CHAT_WRITE_TTL
             await db.remember_chat(
                 chat.id,
                 chat_type=getattr(chat, "type", None),
                 title=getattr(chat, "title", None) or getattr(chat, "full_name", None),
                 username=getattr(chat, "username", None),
             )
-        if user:
+        if user and self._seen_users.get(user.id, 0) <= now:
+            self._seen_users[user.id] = now + self.USER_WRITE_TTL
             await db.remember_user(
                 user.id,
                 username=user.username,
