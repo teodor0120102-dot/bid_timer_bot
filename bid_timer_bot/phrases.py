@@ -91,40 +91,43 @@ def status(
     )
 
 
-def timer_start(remaining_sec: int, total_sec: int) -> str:
+def timer_start(remaining_sec: int, total_sec: int, leader: Optional[str] = None) -> str:
     bar = progress_bar(remaining_sec, total_sec)
     time_str = format_time(remaining_sec)
+    leader_line = f"\n\n👑 Лидирует: {leader}" if leader else ""
     return card(
         "⏱ Раунд начался",
-        f"<code>{bar}</code>  <b>{time_str}</b>\n\n"
+        f"<code>{bar}</code>  <b>{time_str}</b>{leader_line}\n\n"
         "Каждое сообщение за ⭐ сбрасывает таймер.\n"
         "Побеждает последний перебивший.",
     )
 
 
-def timer_tick(remaining_sec: int, total_sec: int) -> str:
+def timer_tick(remaining_sec: int, total_sec: int, leader: Optional[str] = None) -> str:
     bar = progress_bar(remaining_sec, total_sec)
     time_str = format_time(remaining_sec)
+    leader_line = f"\n\n👑 Лидирует: {leader}" if leader else ""
     if remaining_sec <= 30:
         return card(
             "⏱ Финишная прямая",
-            f"<code>{bar}</code>  <b>{time_str}</b>\n\n"
+            f"<code>{bar}</code>  <b>{time_str}</b>{leader_line}\n\n"
             "Ждём перебив…",
         )
     return card(
         "⏱ Таймер",
-        f"<code>{bar}</code>  <b>{time_str}</b>\n\n"
+        f"<code>{bar}</code>  <b>{time_str}</b>{leader_line}\n\n"
         "Платное сообщение = ставка",
     )
 
 
-def timer_countdown(seconds: int, total_sec: int) -> str:
+def timer_countdown(seconds: int, total_sec: int, leader: Optional[str] = None) -> str:
     emoji = countdown_emoji(seconds) or str(seconds)
     bar = progress_bar(seconds, total_sec)
+    leader_line = f"\n\n👑 Лидирует: {leader}" if leader else ""
     return card(
         "⚠️ Финальный отсчёт",
         f"       {emoji}\n\n"
-        f"<code>{bar}</code>  <b>{seconds}</b> сек",
+        f"<code>{bar}</code>  <b>{seconds}</b> сек{leader_line}",
     )
 
 
@@ -132,11 +135,21 @@ def timer_finished() -> str:
     return card("🏁 Время вышло", "Подводим итоги…")
 
 
-def bid_reset(mention: str, time_str: str, total_sec: int, remaining_sec: int) -> str:
+def bid_reset(
+    mention: str,
+    time_str: str,
+    total_sec: int,
+    remaining_sec: int,
+    prev_mention: Optional[str] = None,
+) -> str:
     bar = progress_bar(remaining_sec, total_sec)
+    if prev_mention:
+        text = f"{mention} перебил ставку {prev_mention}!"
+    else:
+        text = f"{mention} сделал ставку!"
     return card(
         "💫 Перебив",
-        f"{mention}\n\n"
+        f"{text}\n\n"
         f"<code>{bar}</code>  <b>{time_str}</b>\n\n"
         "Таймер сброшен.",
     )

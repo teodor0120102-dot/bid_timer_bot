@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any, Awaitable, Callable
 
-from aiogram import Bot, Dispatcher
+from aiogram import BaseMiddleware, Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import CallbackQuery, ChatMemberUpdated, Message, TelegramObject
 
 # Railway часто запускает файл как `python bot.py` в Root Directory.
 # В этом режиме относительные импорты (`from .x import y`) не работают,
@@ -26,6 +28,50 @@ logging.basicConfig(
 log = logging.getLogger("bidtimer")
 
 
+class RecipientTrackerMiddleware(BaseMiddleware):
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        try:
+            await self._remember(event)
+        except Exception:
+            log.debug("Recipient tracking skipped", exc_info=True)
+        return await handler(event, data)
+
+    async def _remember(self, event: TelegramObject) -> None:
+        chat = None
+        user = None
+
+        if isinstance(event, Message):
+            chat = event.chat
+            user = event.from_user
+        elif isinstance(event, CallbackQuery):
+            user = event.from_user
+            if event.message:
+                chat = event.message.chat
+        elif isinstance(event, ChatMemberUpdated):
+            chat = event.chat
+            user = event.from_user
+
+        if chat:
+            await db.remember_chat(
+                chat.id,
+                chat_type=getattr(chat, "type", None),
+                title=getattr(chat, "title", None) or getattr(chat, "full_name", None),
+                username=getattr(chat, "username", None),
+            )
+        if user:
+            await db.remember_user(
+                user.id,
+                username=user.username,
+                full_name=user.full_name,
+                is_bot=user.is_bot,
+            )
+
+
 async def run_polling() -> None:
     await db.init_db()
 
@@ -36,6 +82,10 @@ async def run_polling() -> None:
     # На хостингах иногда остаётся webhook/зависшие апдейты — это ломает polling.
     await bot.delete_webhook(drop_pending_updates=True)
     dp = Dispatcher(storage=MemoryStorage())
+    tracker = RecipientTrackerMiddleware()
+    dp.message.outer_middleware(tracker)
+    dp.callback_query.outer_middleware(tracker)
+    dp.my_chat_member.outer_middleware(tracker)
 
     # Игры ПЕРЕД handlers — чтобы /games и callback'и игр обрабатывались первыми,
     # и не перехватывались catch-all хэндлером on_any_message из handlers.

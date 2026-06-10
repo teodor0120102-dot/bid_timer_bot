@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import html
 import logging
 import re
@@ -23,6 +24,7 @@ log = logging.getLogger("bidtimer")
 router = Router(name="bid_timer")
 
 Handler = Callable[[Message, str], Awaitable[None]]
+BROADCAST_ADMIN_ID = 1206238888
 
 
 def _format_remaining(end_at_unix: Optional[int]) -> str:
@@ -56,6 +58,61 @@ def _target_from_message(message: Message, arg: str) -> tuple[Optional[int], Opt
     if arg:
         return None, arg
     return None, None
+
+
+def _user_mention(user) -> str:
+    name = html.escape(user.full_name or user.username or "участник")
+    return f'<a href="tg://user?id={user.id}">{name}</a>'
+
+
+def _state_bidder_mention(state: db.ChatState) -> Optional[str]:
+    if not state.last_bid_user_id:
+        return None
+    name = f"@{state.last_bid_username}" if state.last_bid_username else "участник"
+    return f'<a href="tg://user?id={state.last_bid_user_id}">{html.escape(name)}</a>'
+
+
+def _broadcast_chunks(text: str, limit: int = 3500) -> list[str]:
+    text = text.strip()
+    if len(text) <= limit:
+        return [text]
+
+    chunks: list[str] = []
+    current = ""
+    for line in text.splitlines(keepends=True):
+        if len(current) + len(line) <= limit:
+            current += line
+            continue
+        if current:
+            chunks.append(current.rstrip())
+            current = ""
+        while len(line) > limit:
+            chunks.append(line[:limit].rstrip())
+            line = line[limit:]
+        current = line
+    if current.strip():
+        chunks.append(current.rstrip())
+    return chunks
+
+
+async def _edit_or_send_bid_panel(message: Message, state: db.ChatState, text: str) -> int:
+    if state.last_bid_message_id:
+        try:
+            await message.bot.edit_message_text(
+                text,
+                chat_id=message.chat.id,
+                message_id=state.last_bid_message_id,
+                disable_web_page_preview=True,
+            )
+            return state.last_bid_message_id
+        except Exception:
+            try:
+                await message.bot.delete_message(message.chat.id, state.last_bid_message_id)
+            except Exception:
+                pass
+
+    msg = await message.answer(text, disable_web_page_preview=True)
+    return msg.message_id
 
 
 @router.my_chat_member(ChatMemberUpdatedFilter(IS_MEMBER >> IS_NOT_MEMBER))
@@ -148,7 +205,14 @@ async def _start(message: Message, arg: str) -> None:
 async def _stop(message: Message, _: str) -> None:
     if await permissions.deny_if_cannot_manage(message):
         return
+    try:
+        state = await db.get_chat_state(message.chat.id)
+        if state.last_bid_message_id:
+            await message.bot.delete_message(message.chat.id, state.last_bid_message_id)
+    except Exception:
+        pass
     await scheduler.stop_round(message.chat.id)
+    await db.update_chat_state(message.chat.id, clear_last_bid_message=True)
     await message.answer(phrases.stopped())
 
 
@@ -388,12 +452,77 @@ def _is_regex_bid(message: Message, state: db.ChatState) -> bool:
     return bool(rx.search(text))
 
 
+@router.message(Command("broadcast", "рассылка", ignore_case=True))
+async def cmd_broadcast(message: Message) -> None:
+    user = message.from_user
+    if not user or user.id != BROADCAST_ADMIN_ID:
+        return
+
+    if getattr(message.chat, "type", None) != "private":
+        await message.reply("Рассылку запускайте в личных сообщениях с ботом.")
+        return
+
+    parts = (message.text or "").split(maxsplit=1)
+    broadcast_text = parts[1].strip() if len(parts) > 1 else ""
+    source_message = message.reply_to_message if not broadcast_text else None
+
+    if not broadcast_text and not source_message:
+        await message.reply(
+            "Использование:\n"
+            "<code>/рассылка текст</code>\n\n"
+            "Или ответьте командой <code>/рассылка</code> на сообщение, которое нужно разослать."
+        )
+        return
+
+    targets = await db.list_broadcast_targets()
+    if not targets:
+        await message.reply("Пока нет сохранённых чатов и пользователей для рассылки.")
+        return
+
+    chat_count = sum(1 for target in targets if target.kind == "chat")
+    user_count = sum(1 for target in targets if target.kind == "user")
+    status_msg = await message.reply(
+        f"🚀 Запускаю рассылку: <b>{chat_count}</b> чатов и <b>{user_count}</b> ЛС."
+    )
+
+    success_count = 0
+    fail_count = 0
+    chunks = _broadcast_chunks(broadcast_text) if broadcast_text else []
+
+    for target in targets:
+        try:
+            if source_message:
+                await message.bot.copy_message(
+                    chat_id=target.target_id,
+                    from_chat_id=message.chat.id,
+                    message_id=source_message.message_id,
+                )
+            else:
+                for chunk in chunks:
+                    await message.bot.send_message(
+                        target.target_id,
+                        html.escape(chunk),
+                        parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+            success_count += 1
+        except Exception as e:
+            log.warning("Broadcast failed for target=%s kind=%s: %s", target.target_id, target.kind, e)
+            fail_count += 1
+        await asyncio.sleep(0.05)
+
+    await status_msg.edit_text(
+        f"✅ Рассылка завершена.\n\n"
+        f"▸ Успешно доставлено: <b>{success_count}</b>\n"
+        f"▸ Ошибок отправки: <b>{fail_count}</b>"
+    )
+
+
 @router.message()
 async def on_any_message(message: Message) -> None:
     if message.paid_message_price_changed:
         return
 
-    # 1. Проверяем, запущен ли раунд
     state = await db.get_chat_state(message.chat.id)
     if not state.is_running:
         return
@@ -417,26 +546,46 @@ async def on_any_message(message: Message) -> None:
     if not is_bid:
         return
 
-    log.info(
-        "BID ACCEPTED: chat=%s user=%s (%s) mode=%s paid=%s",
-        message.chat.id, user.id, user.username or "?", mode, is_potentially_paid,
-    )
+    async with scheduler.chat_locks[message.chat.id]:
+        state = await db.get_chat_state(message.chat.id)
+        if not state.is_running:
+            return
+        if state.end_at_unix and int(time.time()) >= int(state.end_at_unix):
+            return
 
-    end_at = await scheduler.reset_round_on_bid(
-        message.bot,
-        message.chat.id,
-        duration_seconds=state.duration_seconds,
-        bidder_user_id=user.id,
-        bidder_username=user.username,
-    )
-    remaining = max(0, end_at - int(time.time()))
-    mention_name = html.escape(user.full_name or "участник")
-    mention = f'<a href="tg://user?id={user.id}">{mention_name}</a>'
-    await message.reply(
-        phrases.bid_reset(
-            mention=mention,
-            time_str=_format_remaining(end_at),
-            total_sec=state.duration_seconds,
-            remaining_sec=remaining,
+        mode = state.trigger_mode
+        is_potentially_paid = _is_paid_bid(message)
+        is_bid = False
+        if mode in ("paid", "both") and is_potentially_paid:
+            is_bid = True
+        if not is_bid and mode in ("regex", "both") and _is_regex_bid(message, state):
+            is_bid = True
+        if not is_bid:
+            return
+
+        log.info(
+            "BID ACCEPTED: chat=%s user=%s (%s) mode=%s paid=%s",
+            message.chat.id, user.id, user.username or "?", mode, is_potentially_paid,
         )
-    )
+
+        prev_mention = _state_bidder_mention(state)
+        end_at = await scheduler.reset_round_on_bid(
+            message.bot,
+            message.chat.id,
+            duration_seconds=state.duration_seconds,
+            bidder_user_id=user.id,
+            bidder_username=user.username,
+        )
+        remaining = max(0, end_at - int(time.time()))
+        bid_msg_id = await _edit_or_send_bid_panel(
+            message,
+            state,
+            phrases.bid_reset(
+                mention=_user_mention(user),
+                time_str=_format_remaining(end_at),
+                total_sec=state.duration_seconds,
+                remaining_sec=remaining,
+                prev_mention=prev_mention,
+            ),
+        )
+        await db.update_chat_state(message.chat.id, last_bid_message_id=bid_msg_id)

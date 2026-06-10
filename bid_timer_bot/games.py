@@ -1,4 +1,4 @@
-"""BidTimerBot — 20 мини-игр (aiogram 3.x Router)."""
+"""BidTimerBot — 25 мини-игр (aiogram 3.x Router)."""
 
 from __future__ import annotations
 
@@ -125,19 +125,24 @@ GAMES_MENU = [
     ("🎲 Покер (2-4 игр.)", "game_dice"),
     ("❌ Крестики-нолики (2 игр.)", "game_ttt"),
     ("🎱 Магический шар", "game_8ball"),
-    ("🔢 Угадай число", "game_gnum"),
-    ("✊ Камень-Ножницы-Бумага", "game_rps"),
+    ("🔢 Угадай число (1-4 игр.)", "game_gnum"),
+    ("✊ КНБ Дуэль (1-2 игр.)", "game_rps"),
     ("💣 Сапёр-лайт", "game_mine"),
     ("🃏 Больше-Меньше", "game_hilo"),
     ("🎡 Колесо Фортуны", "game_whl"),
-    ("📝 Виселица", "game_hang"),
-    ("🧠 Викторина", "game_triv"),
+    ("📝 Виселица (1-4 игр.)", "game_hang"),
+    ("🧠 Викторина (1-4 игр.)", "game_triv"),
     ("🐍 Змейка", "game_snke"),
+    ("🕵️ Шпион (3-4 игр.)", "game_spy"),
     ("🎪 Русская рулетка", "game_roul"),
     ("🏆 Дуэль", "game_duel"),
     ("🔮 Предсказание", "game_fort"),
     ("💰 Краш", "game_crsh"),
     ("🏴‍☠️ Сундук", "game_chest"),
+    ("🧩 2048", "game_2048"),
+    ("🧠 Мемори", "game_mem"),
+    ("🐉 Рейд-босс", "game_raid"),
+    ("🏗 Башня риска", "game_tower"),
 ]
 
 
@@ -195,11 +200,16 @@ async def cmd_games_help(message: Message) -> None:
         "📝 <b>Виселица (1-4 игр.)</b> — угадай слово по буквам (одиночно или кооператив).\n"
         "🧠 <b>Викторина (1-4 игр.)</b> — 10 вопросов (одиночно или соревнование в лобби).\n"
         "🐍 <b>Змейка</b> — пошаговое интерактивное управление змейкой.\n"
+        "🕵️ <b>Шпион (3-4 игр.)</b> — найдите скрывающегося шпиона или угадайте секретную локацию.\n"
         "🎪 <b>Русская рулетка</b> — групповая игра на выбывание.\n"
         "🏆 <b>Дуэль</b> — дуэль реакции против другого игрока.\n"
         "🔮 <b>Предсказание</b> — получи предсказание на сегодняшний день.\n"
         "💰 <b>Краш</b> — забери деньги до того, как график рухнет.\n"
-        "🏴‍☠️ <b>Сундук</b> — найди сокровище среди 9 сундуков.\n\n"
+        "🏴‍☠️ <b>Сундук</b> — найди сокровище среди 9 сундуков.\n"
+        "🧩 <b>2048</b> — собирай плитки до 2048 на кнопках.\n"
+        "🧠 <b>Мемори</b> — открой все пары на поле 4x4.\n"
+        "🐉 <b>Рейд-босс</b> — общий бой чата против босса с таблицей урона.\n"
+        "🏗 <b>Башня риска</b> — поднимайся выше или забирай награду.\n\n"
         "Для запуска меню выбора игр отправьте команду /games."
     )
     await message.answer(card("❓ Помощь по играм", help_body))
@@ -341,7 +351,8 @@ async def game_race_start(cb: CallbackQuery) -> None:
     game_sess = _set("race_game", chat_key, {
         "players": players,
         "positions": positions,
-        "winner": None
+        "winner": None,
+        "cooldowns": {}
     })
     _pop("race_lobby", chat_key)
     await cb.answer("Гонка начинается!")
@@ -359,7 +370,16 @@ async def game_race_gas(cb: CallbackQuery) -> None:
     if not sess or sess["winner"]:
         await cb.answer()
         return
-    sess["positions"][target_uid] += 1
+    
+    # Cooldown check
+    now = time.time()
+    last_click = sess.setdefault("cooldowns", {}).get(target_uid, 0.0)
+    if now - last_click < 0.6:
+        await cb.answer("⚡ Не так быстро! Остынь немного.", show_alert=False)
+        return
+    sess["cooldowns"][target_uid] = now
+
+    sess["positions"][target_uid] += random.randint(1, 2)
     if sess["positions"][target_uid] >= 8:
         sess["winner"] = cb.from_user
         _pop("race_game", chat_key)
@@ -806,7 +826,7 @@ async def game_dice_start(cb: CallbackQuery) -> None:
     await cb.answer("Бросаем кости!")
 
     msg = await cb.message.edit_text(card("🎲 Покер на костях", "🎲 Кости вращаются..."))
-    anim_faces = ["⚀", "⚁", "⚂", "⚃", "⚄", "⚅"]
+    anim_faces = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣"]
     for _ in range(4):
         temp_lines = []
         for p in players:
@@ -823,7 +843,7 @@ async def game_dice_start(cb: CallbackQuery) -> None:
     best_rank = -1
     best_sum = -1
     winners = []
-    faces_map = {1: "⚀", 2: "⚁", 3: "⚂", 4: "⚃", 5: "⚄", 6: "⚅"}
+    faces_map = {1: "1️⃣", 2: "2️⃣", 3: "3️⃣", 4: "4️⃣", 5: "5️⃣", 6: "6️⃣"}
 
     for p in players:
         hand = [random.randint(1, 6) for _ in range(5)]
@@ -1057,8 +1077,7 @@ async def game_gnum_select_mode(cb: CallbackQuery) -> None:
     if mode == 1:
         key = _key(chat_id, uid)
         secret = random.randint(1, 100)
-        _set("gnum", key, {"num": secret, "tries": 7, "max_tries": 7})
-        await cb.message.answer(
+        msg = await cb.message.answer(
             card(
                 "🔢 Угадай число",
                 "Я загадал число от <b>1</b> до <b>100</b>.\n"
@@ -1067,6 +1086,7 @@ async def game_gnum_select_mode(cb: CallbackQuery) -> None:
             ),
             reply_markup=_kb([[_btn("◀️ В меню", "games_back")]]),
         )
+        _set("gnum", key, {"num": secret, "tries": 7, "max_tries": 7, "msg_id": msg.message_id})
     else:
         chat_key = (chat_id,)
         sess = _set("gnum_lobby", chat_key, {
@@ -1138,16 +1158,7 @@ async def _game_gnum_start_mp(cb: CallbackQuery, sess: dict) -> None:
     players = sess["players"]
     secret = random.randint(1, 100)
     
-    game_sess = _set("gnum_mp", chat_key, {
-        "players": players,
-        "num": secret,
-        "turn_i": 0,
-        "history": [],
-    })
-    _pop("gnum_lobby", chat_key)
-    
-    await cb.answer("Игра начинается!")
-    await cb.message.answer(
+    msg = await cb.message.answer(
         card(
             "🔢 Угадай число (Мультиплеер)",
             f"Я загадал число от <b>1</b> до <b>100</b>.\n"
@@ -1157,6 +1168,16 @@ async def _game_gnum_start_mp(cb: CallbackQuery, sess: dict) -> None:
         ),
         reply_markup=_kb([[_btn("◀️ В меню", "games_back")]])
     )
+    
+    _set("gnum_mp", chat_key, {
+        "players": players,
+        "num": secret,
+        "turn_i": 0,
+        "history": [],
+        "msg_id": msg.message_id
+    })
+    _pop("gnum_lobby", chat_key)
+    await cb.answer("Игра начинается!")
 
 
 @router.message(F.text.regexp(r"^\d{1,3}$"))
@@ -1179,8 +1200,12 @@ async def game_gnum_guess(message: Message) -> None:
         if uid not in player_ids:
             return
             
+        try:
+            await message.delete()
+        except Exception:
+            pass
+            
         if uid != current_player.id:
-            await message.reply(f"❌ Сейчас ход игрока {_mention(current_player)}!")
             return
             
         secret = sess_mp["num"]
@@ -1188,14 +1213,19 @@ async def game_gnum_guess(message: Message) -> None:
         
         if guess == secret:
             _pop("gnum_mp", chat_key)
-            await message.reply(
-                card(
-                    "🔢 Угадай число (Мультиплеер)",
-                    f"🎉 {_mention(message.from_user)} угадал число <b>{secret}</b> и ПОБЕДИЛ!\n\n"
-                    f"Игра окончена!"
-                ),
-                reply_markup=_kb([[_btn("◀️ В меню", "games_back")]]),
-            )
+            try:
+                await message.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=sess_mp["msg_id"],
+                    text=card(
+                        "🔢 Угадай число (Мультиплеер)",
+                        f"🎉 {_mention(message.from_user)} угадал число <b>{secret}</b> и ПОБЕДИЛ!\n\n"
+                        f"Игра окончена!"
+                    ),
+                    reply_markup=_kb([[_btn("◀️ В меню", "games_back")]]),
+                )
+            except Exception:
+                pass
         else:
             hint = "больше ⬆️" if guess < secret else "меньше ⬇️"
             history.append(f"▸ {_mention(message.from_user)}: {guess} (Загаданное число {hint})")
@@ -1206,45 +1236,69 @@ async def game_gnum_guess(message: Message) -> None:
             _set("gnum_mp", chat_key, sess_mp)
             
             hist_str = "\n".join(history[-5:])
-            await message.reply(
-                card(
-                    "🔢 Угадай число (Мультиплеер)",
-                    f"Число {guess} неверно!\n\n"
-                    f"<b>История ходов:</b>\n{hist_str}\n\n"
-                    f"Сейчас ход игрока: {_mention(next_player)}\n"
-                    f"Ждем ваше число!"
+            try:
+                await message.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=sess_mp["msg_id"],
+                    text=card(
+                        "🔢 Угадай число (Мультиплеер)",
+                        f"Число {guess} неверно!\n\n"
+                        f"<b>История ходов:</b>\n{hist_str}\n\n"
+                        f"Сейчас ход игрока: {_mention(next_player)}\n"
+                        f"Ждем ваше число!"
+                    ),
+                    reply_markup=_kb([[_btn("◀️ В меню", "games_back")]])
                 )
-            )
+            except Exception:
+                pass
         return
 
     # Одиночная игра
     key = _key(chat_id, uid)
     sess_sp = _get("gnum", key)
     if sess_sp:
+        try:
+            await message.delete()
+        except Exception:
+            pass
+            
         secret = sess_sp["num"]
         sess_sp["tries"] -= 1
         left = sess_sp["tries"]
         if guess == secret:
             _pop("gnum", key)
             used = sess_sp["max_tries"] - left
-            await message.reply(
-                card("🔢 Угадай число", f"🎉 Верно! Это было <b>{secret}</b>!\nПопыток использовано: <b>{used}</b>"),
-                reply_markup=_kb([[_btn("◀️ В меню", "games_back")]]),
-            )
+            try:
+                await message.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=sess_sp["msg_id"],
+                    text=card("🔢 Угадай число", f"🎉 Верно! Это было <b>{secret}</b>!\nПопыток использовано: <b>{used}</b>"),
+                    reply_markup=_kb([[_btn("◀️ В меню", "games_back")]]),
+                )
+            except Exception:
+                pass
         elif left <= 0:
             _pop("gnum", key)
-            await message.reply(
-                card("🔢 Угадай число", f"😔 Попытки кончились!\nЗагаданное число: <b>{secret}</b>"),
-                reply_markup=_kb([[_btn("◀️ В меню", "games_back")]]),
-            )
-        elif guess < secret:
-            await message.reply(
-                card("🔢 Угадай число", f"⬆️ <b>Больше!</b>\nОсталось попыток: <b>{left}</b>")
-            )
+            try:
+                await message.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=sess_sp["msg_id"],
+                    text=card("🔢 Угадай число", f"😔 Попытки кончились!\nЗагаданное число: <b>{secret}</b>"),
+                    reply_markup=_kb([[_btn("◀️ В меню", "games_back")]]),
+                )
+            except Exception:
+                pass
         else:
-            await message.reply(
-                card("🔢 Угадай число", f"⬇️ <b>Меньше!</b>\nОсталось попыток: <b>{left}</b>")
-            )
+            hint = "Больше ⬆️" if guess < secret else "Меньше ⬇️"
+            try:
+                await message.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=sess_sp["msg_id"],
+                    text=card("🔢 Угадай число", f"Подсказка: <b>{hint}</b> для {guess}\nОсталось попыток: <b>{left}</b>"),
+                    reply_markup=_kb([[_btn("◀️ В меню", "games_back")]]),
+                )
+            except Exception:
+                pass
 
 
 # ──────────────────────────────────────────────
@@ -1770,14 +1824,192 @@ def _hangman_letter_kb(sess: dict, uid: int) -> InlineKeyboardMarkup:
     return _kb(rows)
 
 
+def _hangman_text_mp(sess: dict) -> str:
+    word = sess["word"]
+    guessed = sess["guessed"]
+    errors = sess["errors"]
+    players = sess["players"]
+    turn_i = sess["turn_i"]
+    active_player = players[turn_i]
+    
+    display = " ".join(ch if ch in guessed else "▪" for ch in word)
+    stage = _HANGMAN_STAGES[min(errors, 6)]
+    wrong = ", ".join(sorted(sess["wrong"])) if sess["wrong"] else "—"
+    
+    body = (
+        f"<code>{stage}</code>\n\n"
+        f"Слово: <b>{display}</b>\n"
+        f"Ошибки ({errors}/6): {wrong}\n\n"
+        f"Ходит игрок: {_mention(active_player)}\n"
+        f"Выберите букву ниже!"
+    )
+    return card("📝 Виселица (Кооператив)", body)
+
+
+def _hangman_letter_kb_mp(sess: dict) -> InlineKeyboardMarkup:
+    guessed = sess["guessed"] | sess["wrong"]
+    rows = []
+    row: list[InlineKeyboardButton] = []
+    for letter in _RU_LETTERS:
+        if letter in guessed:
+            continue
+        row.append(_btn(letter, f"hg_mp_{letter}"))
+        if len(row) == 7:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([_btn("◀️ В меню", "games_back")])
+    return _kb(rows)
+
+
 @router.callback_query(F.data == "game_hang")
-async def game_hang_start(cb: CallbackQuery) -> None:
+async def game_hang_menu(cb: CallbackQuery) -> None:
+    await cb.answer()
+    kb = _kb([
+        [_btn("👤 Одиночная", "hang_mode_1")],
+        [_btn("👥 Кооператив (2-4 игр.)", "hang_lobby_start")],
+        [_btn("◀️ В меню", "games_back")]
+    ])
+    await cb.message.answer(
+        card("📝 Виселица", "Выберите режим игры:"),
+        reply_markup=kb
+    )
+
+
+@router.callback_query(F.data == "hang_mode_1")
+async def game_hang_sp_start(cb: CallbackQuery) -> None:
     await cb.answer()
     uid = cb.from_user.id
     key = _key(cb.message.chat.id, uid)
     word = random.choice(_HANGMAN_WORDS).upper()
     sess = _set("hang", key, {"word": word, "guessed": set(), "wrong": set(), "errors": 0})
     await cb.message.answer(_hangman_text(sess), reply_markup=_hangman_letter_kb(sess, uid))
+
+
+@router.callback_query(F.data == "hang_lobby_start")
+async def game_hang_lobby(cb: CallbackQuery) -> None:
+    await cb.answer()
+    chat_id = cb.message.chat.id
+    uid = cb.from_user.id
+    chat_key = (chat_id,)
+    sess = _set("hang_lobby", chat_key, {
+        "players": [cb.from_user],
+        "active": False
+    })
+    players_str = "\n".join(f"▸ {_mention(p)}" for p in sess["players"])
+    await cb.message.answer(
+        card("📝 Виселица (Лобби)", f"Ожидание игроков (2-4 игрока)...\n\nУчастники:\n{players_str}"),
+        reply_markup=_get_lobby_kb("hg", sess["players"], chat_id, uid)
+    )
+
+
+@router.callback_query(F.data == "jo_hg")
+async def game_hang_join(cb: CallbackQuery) -> None:
+    chat_key = (cb.message.chat.id,)
+    sess = _get("hang_lobby", chat_key)
+    if not sess or sess.get("active"):
+        await cb.answer("Лобби не найдено или игра началась!", show_alert=True)
+        return
+    if cb.from_user.id in [p.id for p in sess["players"]]:
+        await cb.answer("Ты уже в лобби!", show_alert=True)
+        return
+    if len(sess["players"]) >= 4:
+        await cb.answer("Лобби переполнено!", show_alert=True)
+        return
+    sess["players"].append(cb.from_user)
+    _set("hang_lobby", chat_key, sess)
+    await cb.answer("Ты присоединился!")
+    
+    players_str = "\n".join(f"▸ {_mention(p)}" for p in sess["players"])
+    await cb.message.edit_text(
+        card("📝 Виселица (Лобби)", f"Ожидание игроков (2-4 игрока)...\n\nУчастники:\n{players_str}"),
+        reply_markup=_get_lobby_kb("hg", sess["players"], cb.message.chat.id, sess["players"][0].id)
+    )
+
+
+@router.callback_query(F.data == "st_hg")
+async def game_hang_start_btn(cb: CallbackQuery) -> None:
+    chat_key = (cb.message.chat.id,)
+    sess = _get("hang_lobby", chat_key)
+    if not sess or sess.get("active"):
+        await cb.answer("Лобби не найдено!", show_alert=True)
+        return
+    if len(sess["players"]) < 2:
+        await cb.answer("Нужно как минимум 2 игрока!", show_alert=True)
+        return
+    
+    sess["active"] = True
+    players = sess["players"]
+    word = random.choice(_HANGMAN_WORDS).upper()
+    
+    game_sess = _set("hang_game", chat_key, {
+        "players": players,
+        "turn_i": 0,
+        "word": word,
+        "guessed": set(),
+        "wrong": set(),
+        "errors": 0
+    })
+    _pop("hang_lobby", chat_key)
+    
+    await cb.answer("Игра начинается!")
+    await cb.message.answer(
+        _hangman_text_mp(game_sess),
+        reply_markup=_hangman_letter_kb_mp(game_sess)
+    )
+
+
+@router.callback_query(F.data.startswith("hg_mp_"))
+async def game_hang_letter_mp(cb: CallbackQuery) -> None:
+    letter = cb.data.split("_")[2].upper()
+    chat_key = (cb.message.chat.id,)
+    sess = _get("hang_game", chat_key)
+    if not sess:
+        await cb.answer("Сессия не найдена или завершена!", show_alert=True)
+        return
+        
+    players = sess["players"]
+    turn_i = sess["turn_i"]
+    active_player = players[turn_i]
+    
+    if cb.from_user.id != active_player.id:
+        await cb.answer(f"❌ Сейчас ход игрока {active_player.first_name}!", show_alert=True)
+        return
+        
+    word = sess["word"]
+    if letter in word:
+        sess["guessed"].add(letter)
+        await cb.answer(f"✅ Буква «{letter}» есть!")
+    else:
+        sess["wrong"].add(letter)
+        sess["errors"] += 1
+        await cb.answer(f"❌ Буквы «{letter}» нет!")
+        
+    if all(ch in sess["guessed"] for ch in word):
+        _pop("hang_game", chat_key)
+        await cb.message.edit_text(
+            card("📝 Виселица (Кооператив)", f"🎉 <b>Победа!</b>\n\nСлово отгадано: <b>{word}</b>\nУчастники победили!"),
+            reply_markup=_kb([[_btn("◀️ В меню", "games_back")]])
+        )
+        return
+        
+    if sess["errors"] >= 6:
+        _pop("hang_game", chat_key)
+        stage = _HANGMAN_STAGES[-1]
+        await cb.message.edit_text(
+            card("📝 Виселица (Кооператив)", f"<code>{stage}</code>\n\n😵 <b>Поражение!</b>\n\nСлово было: <b>{word}</b>"),
+            reply_markup=_kb([[_btn("◀️ В меню", "games_back")]])
+        )
+        return
+        
+    sess["turn_i"] = (turn_i + 1) % len(players)
+    _set("hang_game", chat_key, sess)
+    
+    try:
+        await cb.message.edit_text(_hangman_text_mp(sess), reply_markup=_hangman_letter_kb_mp(sess))
+    except Exception:
+        pass
 
 
 @router.callback_query(F.data.startswith("hg_"))
@@ -1868,35 +2100,277 @@ _TRIVIA_QUESTIONS: list[dict] = [
 ]
 
 
-def _trivia_text(sess: dict) -> str:
-    qi = sess["qi"]
-    total = sess["total"]
-    score = sess["score"]
-    q = sess["questions"][qi]
-    return card(
-        "🧠 Викторина",
-        f"Вопрос <b>{qi + 1}</b> из <b>{total}</b>  |  Счёт: <b>{score}</b>\n\n"
-        f"<b>{q['q']}</b>",
-    )
-
-
-def _trivia_kb(sess: dict, uid: int) -> InlineKeyboardMarkup:
+def _get_triv_kb_mp(sess: dict) -> InlineKeyboardMarkup:
     q = sess["questions"][sess["qi"]]
     rows = []
     for i, ans in enumerate(q["a"]):
-        rows.append([_btn(ans, f"tv_{uid}_{i}")])
+        rows.append([_btn(ans, f"tv_mp_{i}")])
+    
+    if len(sess["answers"]) >= len(sess["players"]):
+        rows.append([_btn("➡️ Далее", "tv_next")])
     rows.append([_btn("◀️ В меню", "games_back")])
     return _kb(rows)
 
 
+async def _send_triv_question_mp(message: Message, sess: dict) -> None:
+    qi = sess["qi"]
+    total = sess["total"]
+    q = sess["questions"][qi]
+    players = sess["players"]
+    
+    answered_uids = sess["answers"].keys()
+    status_lines = []
+    for p in players:
+        status = "✅ Ответил" if p.id in answered_uids else "⏳ Думает"
+        status_lines.append(f"▸ {_mention(p)}: {status}")
+    
+    body = (
+        f"Вопрос <b>{qi + 1}</b> из <b>{total}</b>\n\n"
+        f"<b>{q['q']}</b>\n\n"
+        f"<b>Статус участников:</b>\n" + "\n".join(status_lines)
+    )
+    
+    await message.answer(
+        card("🧠 Викторина (Мультиплеер)", body),
+        reply_markup=_get_triv_kb_mp(sess)
+    )
+
+
 @router.callback_query(F.data == "game_triv")
-async def game_trivia_start(cb: CallbackQuery) -> None:
+async def game_trivia_menu(cb: CallbackQuery) -> None:
+    await cb.answer()
+    kb = _kb([
+        [_btn("👤 Одиночная", "triv_mode_1")],
+        [_btn("👥 Мультиплеер (2-4 игр.)", "triv_lobby_start")],
+        [_btn("◀️ В меню", "games_back")]
+    ])
+    await cb.message.answer(
+        card("🧠 Викторина", "Выберите режим игры:"),
+        reply_markup=kb
+    )
+
+
+@router.callback_query(F.data == "triv_mode_1")
+async def game_trivia_sp_start(cb: CallbackQuery) -> None:
     await cb.answer()
     uid = cb.from_user.id
     key = _key(cb.message.chat.id, uid)
     questions = random.sample(_TRIVIA_QUESTIONS, min(10, len(_TRIVIA_QUESTIONS)))
     sess = _set("triv", key, {"questions": questions, "qi": 0, "score": 0, "total": len(questions)})
     await cb.message.answer(_trivia_text(sess), reply_markup=_trivia_kb(sess, uid))
+
+
+@router.callback_query(F.data == "triv_lobby_start")
+async def game_trivia_lobby(cb: CallbackQuery) -> None:
+    await cb.answer()
+    chat_id = cb.message.chat.id
+    uid = cb.from_user.id
+    chat_key = (chat_id,)
+    sess = _set("triv_lobby", chat_key, {
+        "players": [cb.from_user],
+        "active": False
+    })
+    players_str = "\n".join(f"▸ {_mention(p)}" for p in sess["players"])
+    await cb.message.answer(
+        card("🧠 Викторина (Лобби)", f"Ожидание игроков (2-4 игрока)...\n\nУчастники:\n{players_str}"),
+        reply_markup=_get_lobby_kb("tv", sess["players"], chat_id, uid)
+    )
+
+
+@router.callback_query(F.data == "jo_tv")
+async def game_trivia_join(cb: CallbackQuery) -> None:
+    chat_key = (cb.message.chat.id,)
+    sess = _get("triv_lobby", chat_key)
+    if not sess or sess.get("active"):
+        await cb.answer("Лобби не найдено или викторина началась!", show_alert=True)
+        return
+    if cb.from_user.id in [p.id for p in sess["players"]]:
+        await cb.answer("Ты уже в лобби!", show_alert=True)
+        return
+    if len(sess["players"]) >= 4:
+        await cb.answer("Лобби переполнено!", show_alert=True)
+        return
+    sess["players"].append(cb.from_user)
+    _set("triv_lobby", chat_key, sess)
+    await cb.answer("Ты присоединился!")
+    
+    players_str = "\n".join(f"▸ {_mention(p)}" for p in sess["players"])
+    await cb.message.edit_text(
+        card("🧠 Викторина (Лобби)", f"Ожидание игроков (2-4 игрока)...\n\nУчастники:\n{players_str}"),
+        reply_markup=_get_lobby_kb("tv", sess["players"], cb.message.chat.id, sess["players"][0].id)
+    )
+
+
+@router.callback_query(F.data == "st_tv")
+async def game_trivia_start_btn(cb: CallbackQuery) -> None:
+    chat_key = (cb.message.chat.id,)
+    sess = _get("triv_lobby", chat_key)
+    if not sess or sess.get("active"):
+        await cb.answer("Лобби не найдено!", show_alert=True)
+        return
+    if len(sess["players"]) < 2:
+        await cb.answer("Нужно как минимум 2 игрока!", show_alert=True)
+        return
+    
+    sess["active"] = True
+    players = sess["players"]
+    questions = random.sample(_TRIVIA_QUESTIONS, min(5, len(_TRIVIA_QUESTIONS)))
+    
+    game_sess = _set("triv_game", chat_key, {
+        "players": players,
+        "questions": questions,
+        "qi": 0,
+        "scores": {p.id: 0 for p in players},
+        "answers": {},
+        "total": len(questions)
+    })
+    _pop("triv_lobby", chat_key)
+    
+    await cb.answer("Викторина начинается!")
+    await _send_triv_question_mp(cb.message, game_sess)
+
+
+@router.callback_query(F.data.startswith("tv_mp_"))
+async def game_trivia_answer_mp(cb: CallbackQuery) -> None:
+    ans_i = int(cb.data.split("_")[2])
+    chat_key = (cb.message.chat.id,)
+    sess = _get("triv_game", chat_key)
+    if not sess:
+        await cb.answer("Сессия не найдена!", show_alert=True)
+        return
+        
+    players = sess["players"]
+    player_ids = [p.id for p in players]
+    uid = cb.from_user.id
+    
+    if uid not in player_ids:
+        await cb.answer("Вы не участвуете в этой викторине!", show_alert=True)
+        return
+        
+    if uid in sess["answers"]:
+        await cb.answer("Вы уже ответили на этот вопрос!", show_alert=True)
+        return
+        
+    sess["answers"][uid] = ans_i
+    _set("triv_game", chat_key, sess)
+    await cb.answer("Ответ принят!")
+    
+    q = sess["questions"][sess["qi"]]
+    correct = q["c"]
+    
+    if len(sess["answers"]) >= len(players):
+        results_lines = []
+        for p in players:
+            p_ans = sess["answers"][p.id]
+            is_correct = (p_ans == correct)
+            if is_correct:
+                sess["scores"][p.id] += 1
+            emoji = "✅" if is_correct else "❌"
+            results_lines.append(f"▸ {_mention(p)}: {emoji} (выбрал {q['a'][p_ans]})")
+            
+        right_ans_text = q["a"][correct]
+        body = (
+            f"Раунд окончен!\n\n"
+            f"Правильный ответ: <b>{right_ans_text}</b>\n\n"
+            f"<b>Результаты раунда:</b>\n" + "\n".join(results_lines)
+        )
+        
+        scores_lines = []
+        for p in players:
+            scores_lines.append(f"▸ {_mention(p)}: <b>{sess['scores'][p.id]}</b> очков")
+        
+        body += f"\n\n<b>Текущая таблица:</b>\n" + "\n".join(scores_lines)
+        
+        await cb.message.edit_text(
+            card("🧠 Викторина: Результаты раунда", body),
+            reply_markup=_kb([
+                [_btn("➡️ Следующий вопрос", "tv_next")],
+                [_btn("◀️ В меню", "games_back")]
+            ])
+        )
+    else:
+        answered_uids = sess["answers"].keys()
+        status_lines = []
+        for p in players:
+            status = "✅ Ответил" if p.id in answered_uids else "⏳ Думает"
+            status_lines.append(f"▸ {_mention(p)}: {status}")
+        
+        qi = sess["qi"]
+        total = sess["total"]
+        body = (
+            f"Вопрос <b>{qi + 1}</b> из <b>{total}</b>\n\n"
+            f"<b>{q['q']}</b>\n\n"
+            f"<b>Статус участников:</b>\n" + "\n".join(status_lines)
+        )
+        try:
+            await cb.message.edit_text(
+                card("🧠 Викторина (Мультиплеер)", body),
+                reply_markup=_get_triv_kb_mp(sess)
+            )
+        except Exception:
+            pass
+
+
+@router.callback_query(F.data == "tv_next")
+async def game_trivia_next_mp(cb: CallbackQuery) -> None:
+    await cb.answer()
+    chat_key = (cb.message.chat.id,)
+    sess = _get("triv_game", chat_key)
+    if not sess:
+        await cb.answer("Сессия не найдена!", show_alert=True)
+        return
+        
+    players = sess["players"]
+    player_ids = [p.id for p in players]
+    if cb.from_user.id not in player_ids:
+        await cb.answer("Вы не в игре!", show_alert=True)
+        return
+        
+    sess["qi"] += 1
+    sess["answers"] = {}
+    _set("triv_game", chat_key, sess)
+    
+    if sess["qi"] >= sess["total"]:
+        _pop("triv_game", chat_key)
+        
+        max_score = max(sess["scores"].values())
+        winners = [p for p in players if sess["scores"][p.id] == max_score]
+        
+        winner_mentions = ", ".join(_mention(w) for w in winners)
+        winner_text = f"🏆 Победитель: {winner_mentions} (<b>{max_score}</b> очков!)" if max_score > 0 else "Никто не набрал очков 😅"
+        
+        scores_lines = []
+        for p in players:
+            scores_lines.append(f"▸ {_mention(p)}: <b>{sess['scores'][p.id]}</b> очков")
+            
+        final_body = (
+            f"Викторина завершена!\n\n"
+            f"{winner_text}\n\n"
+            f"<b>Итоговый счет:</b>\n" + "\n".join(scores_lines)
+        )
+        
+        await cb.message.edit_text(
+            card("🧠 Викторина окончена", final_body),
+            reply_markup=_kb([[_btn("◀️ В меню", "games_back")]])
+        )
+    else:
+        q = sess["questions"][sess["qi"]]
+        status_lines = []
+        for p in players:
+            status = "⏳ Думает"
+            status_lines.append(f"▸ {_mention(p)}: {status}")
+            
+        qi = sess["qi"]
+        total = sess["total"]
+        body = (
+            f"Вопрос <b>{qi + 1}</b> из <b>{total}</b>\n\n"
+            f"<b>{q['q']}</b>\n\n"
+            f"<b>Статус участников:</b>\n" + "\n".join(status_lines)
+        )
+        await cb.message.edit_text(
+            card("🧠 Викторина (Мультиплеер)", body),
+            reply_markup=_get_triv_kb_mp(sess)
+        )
 
 
 @router.callback_query(F.data.startswith("tv_"))
@@ -1949,66 +2423,139 @@ async def game_trivia_answer(cb: CallbackQuery) -> None:
 _SNAKE_W, _SNAKE_H = 8, 8
 
 
+def _render_snake_board(sess: dict) -> str:
+    snake = sess["snake"]
+    food = sess["food"]
+    score = sess["score"]
+    
+    grid_lines = []
+    for r in range(_SNAKE_H):
+        row_str = ""
+        for c in range(_SNAKE_W):
+            if (r, c) == snake[0]:
+                row_str += "🟢"
+            elif (r, c) in snake:
+                row_str += "🟩"
+            elif (r, c) == food:
+                row_str += "🍎"
+            else:
+                row_str += "⬛"
+        grid_lines.append(row_str)
+    field = "\n".join(grid_lines)
+    return card("🐍 Змейка", f"{field}\n\n🍎 Счёт: <b>{score}</b>")
+
+
+def _get_snake_kb(uid: int, game_over: bool = False) -> InlineKeyboardMarkup:
+    if game_over:
+        return _kb([[_btn("◀️ В меню", "games_back")]])
+    return _kb([
+        [_btn("🔼", f"sn_move_{uid}_up")],
+        [_btn("◀️", f"sn_move_{uid}_left"), _btn("🔽", f"sn_move_{uid}_down"), _btn("▶️", f"sn_move_{uid}_right")],
+        [_btn("◀️ В меню", "games_back")]
+    ])
+
+
 @router.callback_query(F.data == "game_snke")
 async def game_snake(cb: CallbackQuery) -> None:
     await cb.answer()
-    msg = await cb.message.answer(card("🐍 Змейка", "Запускаю демо..."))
-    # Простая автоматическая змейка
+    uid = cb.from_user.id
+    chat_id = cb.message.chat.id
+    key = _key(chat_id, uid)
+    
     snake = [(3, 3), (3, 2), (3, 1)]
-    food = (5, 5)
-    directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]
-    d_idx = 0
-    score = 0
-    for step in range(20):
-        head = snake[0]
-        # Простой AI: двигаемся к еде
-        hr, hc = head
-        fr, fc = food
-        if hc < fc:
-            d_idx = 0  # right
-        elif hr < fr:
-            d_idx = 1  # down
-        elif hc > fc:
-            d_idx = 2  # left
-        elif hr > fr:
-            d_idx = 3  # up
-        dr, dc = directions[d_idx]
-        new_head = ((hr + dr) % _SNAKE_H, (hc + dc) % _SNAKE_W)
-        snake.insert(0, new_head)
-        if new_head == food:
-            score += 1
-            # Новая еда
+    while True:
+        food = (random.randint(0, _SNAKE_H - 1), random.randint(0, _SNAKE_W - 1))
+        if food not in snake:
+            break
+            
+    sess = _set("snake_game", key, {
+        "snake": snake,
+        "food": food,
+        "score": 0,
+        "game_over": False
+    })
+    
+    await cb.message.answer(
+        _render_snake_board(sess),
+        reply_markup=_get_snake_kb(uid)
+    )
+
+
+@router.callback_query(F.data.startswith("sn_move_"))
+async def game_snake_move(cb: CallbackQuery) -> None:
+    parts = cb.data.split("_")
+    if len(parts) != 4:
+        await cb.answer()
+        return
+    
+    target_uid = int(parts[2])
+    direction = parts[3]
+    
+    if cb.from_user.id != target_uid:
+        await cb.answer("Это не твоя игра!", show_alert=True)
+        return
+        
+    chat_id = cb.message.chat.id
+    key = _key(chat_id, target_uid)
+    sess = _get("snake_game", key)
+    if not sess or sess.get("game_over"):
+        await cb.answer("Игра окончена или сессия истекла!", show_alert=True)
+        return
+        
+    snake = sess["snake"]
+    food = sess["food"]
+    score = sess["score"]
+    
+    dir_map = {
+        "up": (-1, 0),
+        "down": (1, 0),
+        "left": (0, -1),
+        "right": (0, 1)
+    }
+    
+    dr, dc = dir_map[direction]
+    head = snake[0]
+    new_head = ((head[0] + dr) % _SNAKE_H, (head[1] + dc) % _SNAKE_W)
+    
+    if new_head in snake[:-1]:
+        sess["game_over"] = True
+        _pop("snake_game", key)
+        board_text = _render_snake_board(sess)
+        board_text += "\n\n💥 <b>Игра окончена! Вы врезались в себя!</b>"
+        await cb.message.edit_text(board_text, reply_markup=_get_snake_kb(target_uid, game_over=True))
+        await cb.answer("💥 Бам! Змейка погибла.", show_alert=True)
+        return
+        
+    snake.insert(0, new_head)
+    
+    if new_head == food:
+        score += 1
+        sess["score"] = score
+        if len(snake) >= _SNAKE_W * _SNAKE_H:
+            sess["game_over"] = True
+            _pop("snake_game", key)
+            board_text = _render_snake_board(sess)
+            board_text += "\n\n🏆 <b>Поздравляем! Вы победили!</b>"
+            await cb.message.edit_text(board_text, reply_markup=_get_snake_kb(target_uid, game_over=True))
+            await cb.answer("🏆 Невероятно! Победа!", show_alert=True)
+            return
+        else:
             while True:
                 food = (random.randint(0, _SNAKE_H - 1), random.randint(0, _SNAKE_W - 1))
                 if food not in snake:
                     break
-        else:
-            snake.pop()
-        # Рисуем поле
-        grid_lines = []
-        for r in range(_SNAKE_H):
-            row_str = ""
-            for c in range(_SNAKE_W):
-                if (r, c) == snake[0]:
-                    row_str += "🟢"
-                elif (r, c) in snake:
-                    row_str += "🟩"
-                elif (r, c) == food:
-                    row_str += "🍎"
-                else:
-                    row_str += "⬛"
-            grid_lines.append(row_str)
-        field = "\n".join(grid_lines)
-        await asyncio.sleep(0.5)
-        try:
-            await msg.edit_text(card("🐍 Змейка", f"{field}\n\n🍎 Счёт: <b>{score}</b>"))
-        except Exception:
-            pass
-    await asyncio.sleep(0.5)
+            sess["food"] = food
+            await cb.answer("🍎 Ам-ням!")
+    else:
+        snake.pop()
+        await cb.answer()
+        
+    _set("snake_game", key, sess)
+    
     try:
-        await msg.edit_text(
-            card("🐍 Змейка", f"Демо окончено!\n\n🍎 Итоговый счёт: <b>{score}</b>"),
-            reply_markup=_kb([[_btn("◀️ В меню", "games_back")]]),
+        await cb.message.edit_text(
+            _render_snake_board(sess),
+            reply_markup=_get_snake_kb(target_uid)
         )
     except Exception:
         pass
@@ -2464,6 +3011,498 @@ async def game_chest_open(cb: CallbackQuery) -> None:
         await cb.message.edit_text(_chest_text(sess), reply_markup=_chest_kb(sess, uid))
     except Exception:
         pass
+
+
+# ──────────────────────────────────────────────
+# 22. 🧩 2048
+# ──────────────────────────────────────────────
+def _2048_new_board() -> list[list[int]]:
+    board = [[0 for _ in range(4)] for _ in range(4)]
+    _2048_spawn(board)
+    _2048_spawn(board)
+    return board
+
+
+def _2048_spawn(board: list[list[int]]) -> None:
+    empty = [(r, c) for r in range(4) for c in range(4) if board[r][c] == 0]
+    if not empty:
+        return
+    r, c = random.choice(empty)
+    board[r][c] = 4 if random.random() < 0.12 else 2
+
+
+def _2048_line(line: list[int]) -> tuple[list[int], int]:
+    compact = [x for x in line if x]
+    result: list[int] = []
+    gained = 0
+    i = 0
+    while i < len(compact):
+        if i + 1 < len(compact) and compact[i] == compact[i + 1]:
+            merged = compact[i] * 2
+            result.append(merged)
+            gained += merged
+            i += 2
+        else:
+            result.append(compact[i])
+            i += 1
+    result.extend([0] * (4 - len(result)))
+    return result, gained
+
+
+def _2048_move(board: list[list[int]], direction: str) -> tuple[list[list[int]], int, bool]:
+    new = [row[:] for row in board]
+    gained = 0
+
+    if direction in ("l", "r"):
+        for r in range(4):
+            line = list(reversed(new[r])) if direction == "r" else new[r][:]
+            moved, add = _2048_line(line)
+            if direction == "r":
+                moved = list(reversed(moved))
+            new[r] = moved
+            gained += add
+    else:
+        for c in range(4):
+            col = [new[r][c] for r in range(4)]
+            if direction == "d":
+                col = list(reversed(col))
+            moved, add = _2048_line(col)
+            if direction == "d":
+                moved = list(reversed(moved))
+            for r in range(4):
+                new[r][c] = moved[r]
+            gained += add
+
+    return new, gained, new != board
+
+
+def _2048_can_move(board: list[list[int]]) -> bool:
+    if any(0 in row for row in board):
+        return True
+    for direction in ("u", "d", "l", "r"):
+        _, _, changed = _2048_move(board, direction)
+        if changed:
+            return True
+    return False
+
+
+def _2048_text(sess: dict) -> str:
+    rows = []
+    for row in sess["board"]:
+        rows.append(" ".join(f"{value or '.':>4}" for value in row))
+    best = max(max(row) for row in sess["board"])
+    status = ""
+    if best >= 2048:
+        status = "\n\n🏆 <b>2048 собрано!</b>"
+    elif not _2048_can_move(sess["board"]):
+        status = "\n\n💥 <b>Ходов больше нет.</b>"
+    return card(
+        "🧩 2048",
+        f"<code>{html.escape(chr(10).join(rows))}</code>\n\n"
+        f"Счёт: <b>{sess['score']}</b> · Лучшая плитка: <b>{best}</b>{status}",
+    )
+
+
+def _2048_kb(uid: int, game_over: bool = False) -> InlineKeyboardMarkup:
+    if game_over:
+        return _kb([
+            [_btn("🔄 Новая игра", f"g2048_{uid}_n")],
+            [_btn("◀️ В меню", "games_back")],
+        ])
+    return _kb([
+        [_btn("⬆️", f"g2048_{uid}_u")],
+        [_btn("⬅️", f"g2048_{uid}_l"), _btn("⬇️", f"g2048_{uid}_d"), _btn("➡️", f"g2048_{uid}_r")],
+        [_btn("🔄", f"g2048_{uid}_n"), _btn("◀️ В меню", "games_back")],
+    ])
+
+
+@router.callback_query(F.data == "game_2048")
+async def game_2048_start(cb: CallbackQuery) -> None:
+    await cb.answer()
+    uid = cb.from_user.id
+    key = _key(cb.message.chat.id, uid)
+    sess = _set("g2048", key, {"board": _2048_new_board(), "score": 0})
+    await cb.message.answer(_2048_text(sess), reply_markup=_2048_kb(uid))
+
+
+@router.callback_query(F.data.startswith("g2048_"))
+async def game_2048_move(cb: CallbackQuery) -> None:
+    parts = cb.data.split("_")
+    if len(parts) != 3:
+        await cb.answer()
+        return
+    uid = int(parts[1])
+    action = parts[2]
+    if cb.from_user.id != uid:
+        await cb.answer("Это не твоя партия!", show_alert=True)
+        return
+    key = _key(cb.message.chat.id, uid)
+    sess = _get("g2048", key)
+    if action == "n" or not sess:
+        sess = _set("g2048", key, {"board": _2048_new_board(), "score": 0})
+        await cb.answer("Новая партия!")
+        await cb.message.edit_text(_2048_text(sess), reply_markup=_2048_kb(uid))
+        return
+    if action not in ("u", "d", "l", "r"):
+        await cb.answer()
+        return
+
+    board, gained, changed = _2048_move(sess["board"], action)
+    if not changed:
+        await cb.answer("Туда хода нет.")
+        return
+    _2048_spawn(board)
+    sess["board"] = board
+    sess["score"] += gained
+    game_over = max(max(row) for row in board) >= 2048 or not _2048_can_move(board)
+    if game_over:
+        _pop("g2048", key)
+    else:
+        _set("g2048", key, sess)
+    await cb.answer(f"+{gained}" if gained else "Ход")
+    await cb.message.edit_text(_2048_text(sess), reply_markup=_2048_kb(uid, game_over=game_over))
+
+
+# ──────────────────────────────────────────────
+# 23. 🧠 Мемори
+# ──────────────────────────────────────────────
+_MEMORY_SYMBOLS = ["🍒", "🍋", "🍇", "🍉", "⭐", "💎", "🔥", "🌙"]
+
+
+def _memory_new() -> dict:
+    cards = _MEMORY_SYMBOLS * 2
+    random.shuffle(cards)
+    return {"cards": cards, "open": set(), "matched": set(), "pick": [], "moves": 0}
+
+
+def _memory_text(sess: dict) -> str:
+    matched = len(sess["matched"]) // 2
+    return card("🧠 Мемори", f"Найди все пары.\n\nПары: <b>{matched}</b> / 8 · Ходов: <b>{sess['moves']}</b>")
+
+
+def _memory_kb(sess: dict, uid: int, done: bool = False) -> InlineKeyboardMarkup:
+    rows = []
+    for r in range(4):
+        row = []
+        for c in range(4):
+            idx = r * 4 + c
+            if idx in sess["matched"] or idx in sess["open"]:
+                row.append(_btn(sess["cards"][idx], "noop"))
+            elif done:
+                row.append(_btn(sess["cards"][idx], "noop"))
+            else:
+                row.append(_btn("❔", f"mem_{uid}_{idx}"))
+        rows.append(row)
+    rows.append([_btn("🔄 Новая", f"mem_{uid}_new"), _btn("◀️ В меню", "games_back")])
+    return _kb(rows)
+
+
+@router.callback_query(F.data == "game_mem")
+async def game_memory_start(cb: CallbackQuery) -> None:
+    await cb.answer()
+    uid = cb.from_user.id
+    key = _key(cb.message.chat.id, uid)
+    sess = _set("memory", key, _memory_new())
+    await cb.message.answer(_memory_text(sess), reply_markup=_memory_kb(sess, uid))
+
+
+@router.callback_query(F.data.startswith("mem_"))
+async def game_memory_pick(cb: CallbackQuery) -> None:
+    parts = cb.data.split("_")
+    if len(parts) != 3:
+        await cb.answer()
+        return
+    uid = int(parts[1])
+    action = parts[2]
+    if cb.from_user.id != uid:
+        await cb.answer("Это не твоя партия!", show_alert=True)
+        return
+    key = _key(cb.message.chat.id, uid)
+    if action == "new":
+        sess = _set("memory", key, _memory_new())
+        await cb.answer("Новая партия!")
+        await cb.message.edit_text(_memory_text(sess), reply_markup=_memory_kb(sess, uid))
+        return
+
+    sess = _get("memory", key)
+    if not sess:
+        sess = _set("memory", key, _memory_new())
+    idx = int(action)
+    if idx in sess["matched"] or idx in sess["open"] or len(sess["pick"]) >= 2:
+        await cb.answer()
+        return
+
+    sess["open"].add(idx)
+    sess["pick"].append(idx)
+    if len(sess["pick"]) == 1:
+        _set("memory", key, sess)
+        await cb.answer()
+        await cb.message.edit_text(_memory_text(sess), reply_markup=_memory_kb(sess, uid))
+        return
+
+    sess["moves"] += 1
+    first, second = sess["pick"]
+    if sess["cards"][first] == sess["cards"][second]:
+        sess["matched"].update(sess["pick"])
+        sess["pick"] = []
+        sess["open"].clear()
+        done = len(sess["matched"]) == 16
+        if done:
+            _pop("memory", key)
+            await cb.answer("Все пары найдены!")
+            await cb.message.edit_text(
+                card("🧠 Мемори", f"🏆 Победа!\n\nХодов: <b>{sess['moves']}</b>"),
+                reply_markup=_memory_kb(sess, uid, done=True),
+            )
+            return
+        _set("memory", key, sess)
+        await cb.answer("Пара!")
+        await cb.message.edit_text(_memory_text(sess), reply_markup=_memory_kb(sess, uid))
+        return
+
+    await cb.answer("Не пара.")
+    await cb.message.edit_text(_memory_text(sess), reply_markup=_memory_kb(sess, uid))
+    await asyncio.sleep(0.8)
+    sess["open"].discard(first)
+    sess["open"].discard(second)
+    sess["pick"] = []
+    _set("memory", key, sess)
+    try:
+        await cb.message.edit_text(_memory_text(sess), reply_markup=_memory_kb(sess, uid))
+    except Exception:
+        pass
+
+
+# ──────────────────────────────────────────────
+# 24. 🐉 Рейд-босс
+# ──────────────────────────────────────────────
+def _mini_bar(current: int, total: int, width: int = 14) -> str:
+    total = max(1, total)
+    current = max(0, min(current, total))
+    filled = round(width * current / total)
+    return "█" * filled + "░" * (width - filled)
+
+
+def _raid_new() -> dict:
+    hp = random.randint(220, 320)
+    return {"hp": hp, "max_hp": hp, "until": time.time() + 180, "players": {}, "active": True}
+
+
+def _raid_top(sess: dict) -> str:
+    players = sess["players"]
+    if not players:
+        return "Пока никто не ударил."
+    rows = []
+    top = sorted(players.items(), key=lambda item: item[1]["damage"], reverse=True)[:5]
+    for uid, data in top:
+        name = html.escape(data["name"])
+        rows.append(f"▸ <a href=\"tg://user?id={uid}\">{name}</a>: <b>{data['damage']}</b>")
+    return "\n".join(rows)
+
+
+def _raid_text(sess: dict) -> str:
+    hp = max(0, int(sess["hp"]))
+    left = max(0, int(sess["until"] - time.time()))
+    return card(
+        "🐉 Рейд-босс",
+        f"HP: <b>{hp}</b> / <b>{sess['max_hp']}</b>\n"
+        f"<code>{_mini_bar(hp, sess['max_hp'])}</code>\n"
+        f"До побега: <b>{left}</b> сек\n\n"
+        f"<b>Урон:</b>\n{_raid_top(sess)}",
+    )
+
+
+def _raid_kb(done: bool = False) -> InlineKeyboardMarkup:
+    if done:
+        return _kb([[_btn("◀️ В меню", "games_back")]])
+    return _kb([
+        [_btn("⚔️ Удар", "raid_hit"), _btn("💥 Риск-удар", "raid_big")],
+        [_btn("◀️ В меню", "games_back")],
+    ])
+
+
+@router.callback_query(F.data == "game_raid")
+async def game_raid_start(cb: CallbackQuery) -> None:
+    await cb.answer()
+    chat_key = (cb.message.chat.id,)
+    sess = _get("raid", chat_key)
+    if sess and sess.get("active") and sess["hp"] > 0:
+        await cb.message.answer(_raid_text(sess), reply_markup=_raid_kb())
+        return
+    sess = _set("raid", chat_key, _raid_new())
+    await cb.message.answer(_raid_text(sess), reply_markup=_raid_kb())
+
+
+@router.callback_query(F.data.startswith("raid_"))
+async def game_raid_attack(cb: CallbackQuery) -> None:
+    if cb.data not in {"raid_hit", "raid_big"}:
+        await cb.answer()
+        return
+    chat_key = (cb.message.chat.id,)
+    sess = _get("raid", chat_key)
+    if not sess or not sess.get("active"):
+        await cb.answer("Рейд не активен.", show_alert=True)
+        return
+    if time.time() > sess["until"]:
+        sess["active"] = False
+        _pop("raid", chat_key)
+        await cb.answer("Босс сбежал!")
+        await cb.message.edit_text(
+            card("🐉 Рейд-босс", f"🐉 Босс сбежал.\n\n<b>Итоговый урон:</b>\n{_raid_top(sess)}"),
+            reply_markup=_raid_kb(done=True),
+        )
+        return
+
+    uid = cb.from_user.id
+    player = sess["players"].setdefault(
+        uid,
+        {"name": cb.from_user.full_name or "Игрок", "damage": 0, "last": 0.0},
+    )
+    now = time.time()
+    cooldown = 2.0
+    if now - player["last"] < cooldown:
+        wait = int(cooldown - (now - player["last"])) + 1
+        await cb.answer(f"Отдых {wait} сек.")
+        return
+
+    player["last"] = now
+    if cb.data == "raid_big":
+        if random.random() < 0.45:
+            damage = 0
+            await cb.answer("Промах!")
+        else:
+            damage = random.randint(32, 58)
+            await cb.answer(f"Крит: -{damage} HP!")
+    else:
+        damage = random.randint(9, 22)
+        await cb.answer(f"-{damage} HP")
+
+    player["damage"] += damage
+    sess["hp"] -= damage
+    if sess["hp"] <= 0:
+        sess["active"] = False
+        _pop("raid", chat_key)
+        await cb.message.edit_text(
+            card("🐉 Рейд-босс", f"🏆 Босс повержен!\n\n<b>Топ урона:</b>\n{_raid_top(sess)}"),
+            reply_markup=_raid_kb(done=True),
+        )
+        return
+
+    _set("raid", chat_key, sess)
+    try:
+        await cb.message.edit_text(_raid_text(sess), reply_markup=_raid_kb())
+    except Exception:
+        pass
+
+
+# ──────────────────────────────────────────────
+# 25. 🏗 Башня риска
+# ──────────────────────────────────────────────
+def _tower_new() -> dict:
+    return {"floor": 1, "score": 0, "trap": random.randrange(3), "active": True}
+
+
+def _tower_text(sess: dict) -> str:
+    floor = sess["floor"]
+    reward = floor * random.randint(8, 14)
+    sess["next_reward"] = reward
+    return card(
+        "🏗 Башня риска",
+        f"Этаж: <b>{floor}</b> / 10\n"
+        f"Награда: <b>{sess['score']}</b>\n"
+        f"Следующий безопасный шаг даст около <b>{reward}</b>.\n\n"
+        "Выбери дверь. За одной из них ловушка.",
+    )
+
+
+def _tower_kb(uid: int, active: bool = True) -> InlineKeyboardMarkup:
+    if not active:
+        return _kb([
+            [_btn("🔄 Новая башня", f"tw_{uid}_new")],
+            [_btn("◀️ В меню", "games_back")],
+        ])
+    return _kb([
+        [_btn("1️⃣", f"tw_{uid}_p0"), _btn("2️⃣", f"tw_{uid}_p1"), _btn("3️⃣", f"tw_{uid}_p2")],
+        [_btn("💰 Забрать", f"tw_{uid}_cash"), _btn("◀️ В меню", "games_back")],
+    ])
+
+
+@router.callback_query(F.data == "game_tower")
+async def game_tower_start(cb: CallbackQuery) -> None:
+    await cb.answer()
+    uid = cb.from_user.id
+    key = _key(cb.message.chat.id, uid)
+    sess = _set("tower", key, _tower_new())
+    await cb.message.answer(_tower_text(sess), reply_markup=_tower_kb(uid))
+
+
+@router.callback_query(F.data.startswith("tw_"))
+async def game_tower_action(cb: CallbackQuery) -> None:
+    parts = cb.data.split("_")
+    if len(parts) != 3:
+        await cb.answer()
+        return
+    uid = int(parts[1])
+    action = parts[2]
+    if cb.from_user.id != uid:
+        await cb.answer("Это не твоя башня!", show_alert=True)
+        return
+    key = _key(cb.message.chat.id, uid)
+    if action == "new":
+        sess = _set("tower", key, _tower_new())
+        await cb.answer("Новая башня!")
+        await cb.message.edit_text(_tower_text(sess), reply_markup=_tower_kb(uid))
+        return
+
+    sess = _get("tower", key)
+    if not sess or not sess.get("active"):
+        await cb.answer("Башня уже закрыта.", show_alert=True)
+        return
+    if action == "cash":
+        sess["active"] = False
+        _pop("tower", key)
+        await cb.answer("Награда забрана!")
+        await cb.message.edit_text(
+            card("🏗 Башня риска", f"💰 Ты забрал награду: <b>{sess['score']}</b>"),
+            reply_markup=_tower_kb(uid, active=False),
+        )
+        return
+
+    if not action.startswith("p"):
+        await cb.answer()
+        return
+    pick = int(action[1:])
+    if pick == sess["trap"]:
+        sess["active"] = False
+        _pop("tower", key)
+        await cb.answer("Ловушка!")
+        await cb.message.edit_text(
+            card(
+                "🏗 Башня риска",
+                f"💥 Ловушка за дверью <b>{pick + 1}</b>.\n\n"
+                f"Сгоревшая награда: <b>{sess['score']}</b>",
+            ),
+            reply_markup=_tower_kb(uid, active=False),
+        )
+        return
+
+    reward = int(sess.get("next_reward") or sess["floor"] * 10)
+    sess["score"] += reward
+    sess["floor"] += 1
+    if sess["floor"] > 10:
+        sess["active"] = False
+        _pop("tower", key)
+        await cb.answer("Вершина!")
+        await cb.message.edit_text(
+            card("🏗 Башня риска", f"🏆 Ты дошёл до вершины!\n\nНаграда: <b>{sess['score']}</b>"),
+            reply_markup=_tower_kb(uid, active=False),
+        )
+        return
+
+    sess["trap"] = random.randrange(3)
+    _set("tower", key, sess)
+    await cb.answer(f"+{reward}")
+    await cb.message.edit_text(_tower_text(sess), reply_markup=_tower_kb(uid))
 
 
 # ──────────────────────────────────────────────

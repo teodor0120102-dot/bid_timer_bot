@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 from typing import List, Optional
 
 import aiosqlite
@@ -22,6 +23,13 @@ class ChatState:
     last_bid_username: Optional[str]
     end_at_unix: Optional[int]
     status_message_id: Optional[int]
+    last_bid_message_id: Optional[int] = None
+
+
+@dataclass(slots=True)
+class BroadcastTarget:
+    target_id: int
+    kind: str
 
 
 def _normalize_username(username: Optional[str]) -> Optional[str]:
@@ -44,7 +52,8 @@ async def init_db() -> None:
                 last_bid_user_id INTEGER,
                 last_bid_username TEXT,
                 end_at_unix INTEGER,
-                status_message_id INTEGER
+                status_message_id INTEGER,
+                last_bid_message_id INTEGER
             )
             """
         )
@@ -58,11 +67,34 @@ async def init_db() -> None:
             )
             """
         )
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS known_chats (
+                chat_id INTEGER PRIMARY KEY,
+                chat_type TEXT,
+                title TEXT,
+                username TEXT,
+                last_seen_unix INTEGER NOT NULL
+            )
+            """
+        )
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS known_users (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                full_name TEXT,
+                is_bot INTEGER NOT NULL DEFAULT 0,
+                last_seen_unix INTEGER NOT NULL
+            )
+            """
+        )
         await db.execute("PRAGMA foreign_keys = ON")
         for stmt in (
             "ALTER TABLE chat_state ADD COLUMN trigger_mode TEXT NOT NULL DEFAULT 'paid'",
             "ALTER TABLE chat_state ADD COLUMN paid_message_star_count INTEGER",
             "ALTER TABLE chat_state ADD COLUMN status_message_id INTEGER",
+            "ALTER TABLE chat_state ADD COLUMN last_bid_message_id INTEGER",
         ):
             try:
                 await db.execute(stmt)
@@ -98,6 +130,7 @@ def _row_to_state(row) -> ChatState:
         last_bid_username=row[7],
         end_at_unix=row[8],
         status_message_id=row[9] if len(row) > 9 else None,
+        last_bid_message_id=row[10] if len(row) > 10 else None,
     )
 
 
@@ -108,7 +141,7 @@ async def get_chat_state(chat_id: int) -> ChatState:
             """
             SELECT chat_id, is_running, duration_seconds, trigger_regex, trigger_mode,
                    paid_message_star_count, last_bid_user_id, last_bid_username,
-                   end_at_unix, status_message_id
+                   end_at_unix, status_message_id, last_bid_message_id
             FROM chat_state WHERE chat_id=?
             """,
             (chat_id,),
@@ -133,7 +166,9 @@ async def update_chat_state(
     last_bid_username: Optional[str] = None,
     end_at_unix: Optional[int] = None,
     status_message_id: Optional[int] = None,
+    last_bid_message_id: Optional[int] = None,
     clear_status_message: bool = False,
+    clear_last_bid_message: bool = False,
     clear_last_bid: bool = False,
 ) -> None:
     async with aiosqlite.connect(DB_PATH) as db:
@@ -162,10 +197,16 @@ async def update_chat_state(
         elif status_message_id is not None:
             sets.append("status_message_id=?")
             params.append(int(status_message_id))
+        if clear_last_bid_message:
+            sets.append("last_bid_message_id=NULL")
+        elif last_bid_message_id is not None:
+            sets.append("last_bid_message_id=?")
+            params.append(int(last_bid_message_id))
         if clear_last_bid:
             sets.append("last_bid_user_id=NULL")
             sets.append("last_bid_username=NULL")
             sets.append("end_at_unix=NULL")
+            sets.append("last_bid_message_id=NULL")
         else:
             if last_bid_user_id is not None:
                 sets.append("last_bid_user_id=?")
@@ -191,7 +232,7 @@ async def list_running_chats() -> List[ChatState]:
             """
             SELECT chat_id, is_running, duration_seconds, trigger_regex, trigger_mode,
                    paid_message_star_count, last_bid_user_id, last_bid_username,
-                   end_at_unix, status_message_id
+                   end_at_unix, status_message_id, last_bid_message_id
             FROM chat_state
             WHERE is_running=1 AND end_at_unix IS NOT NULL
             """
@@ -200,6 +241,93 @@ async def list_running_chats() -> List[ChatState]:
         await cur.close()
 
     return [_row_to_state(row) for row in rows]
+
+
+async def list_all_chats() -> List[int]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT chat_id FROM chat_state")
+        rows = await cur.fetchall()
+        await cur.close()
+    return [row[0] for row in rows]
+
+
+async def remember_chat(
+    chat_id: int,
+    *,
+    chat_type: Optional[str] = None,
+    title: Optional[str] = None,
+    username: Optional[str] = None,
+) -> None:
+    now = int(time.time())
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO known_chats (chat_id, chat_type, title, username, last_seen_unix)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(chat_id) DO UPDATE SET
+                chat_type=COALESCE(excluded.chat_type, known_chats.chat_type),
+                title=COALESCE(excluded.title, known_chats.title),
+                username=COALESCE(excluded.username, known_chats.username),
+                last_seen_unix=excluded.last_seen_unix
+            """,
+            (chat_id, chat_type, title, _normalize_username(username), now),
+        )
+        await db.commit()
+
+
+async def remember_user(
+    user_id: int,
+    *,
+    username: Optional[str] = None,
+    full_name: Optional[str] = None,
+    is_bot: bool = False,
+) -> None:
+    now = int(time.time())
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO known_users (user_id, username, full_name, is_bot, last_seen_unix)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                username=COALESCE(excluded.username, known_users.username),
+                full_name=COALESCE(excluded.full_name, known_users.full_name),
+                is_bot=excluded.is_bot,
+                last_seen_unix=excluded.last_seen_unix
+            """,
+            (user_id, _normalize_username(username), full_name, 1 if is_bot else 0, now),
+        )
+        await db.commit()
+
+
+async def list_broadcast_targets() -> List[BroadcastTarget]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            """
+            SELECT chat_id, 'chat' FROM known_chats
+            WHERE chat_id < 0 OR chat_type IN ('group', 'supergroup', 'channel')
+            UNION
+            SELECT chat_id, 'chat' FROM chat_state
+            WHERE chat_id < 0
+            UNION
+            SELECT user_id, 'user' FROM known_users
+            WHERE is_bot=0
+            UNION
+            SELECT chat_id, 'user' FROM known_chats
+            WHERE chat_id > 0 AND (chat_type IS NULL OR chat_type='private')
+            """
+        )
+        rows = await cur.fetchall()
+        await cur.close()
+
+    targets: list[BroadcastTarget] = []
+    seen: set[int] = set()
+    for target_id, kind in rows:
+        target_id = int(target_id)
+        if target_id in seen:
+            continue
+        seen.add(target_id)
+        targets.append(BroadcastTarget(target_id=target_id, kind=str(kind)))
+    return targets
 
 
 async def add_chat_manager(
