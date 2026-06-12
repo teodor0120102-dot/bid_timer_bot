@@ -156,7 +156,6 @@ GAMES_MENU = [
     ("🧠 Мемори", "game_mem"),
     ("🐉 Рейд-босс", "game_raid"),
     ("🏗 Башня риска", "game_tower"),
-    ("🤖 ИИ-Чат", "game_ai"),
     ("📝 Вордли (Слова)", "game_wordle"),
     ("🪙 Счастливая карта", "game_lucky"),
 ]
@@ -169,6 +168,7 @@ def _games_keyboard() -> InlineKeyboardMarkup:
         if i + 1 < len(GAMES_MENU):
             row.append(_btn(GAMES_MENU[i + 1][0], GAMES_MENU[i + 1][1]))
         rows.append(row)
+    rows.append([_btn("◀️ Главное меню", "main_menu")])
     return _kb(rows)
 
 
@@ -231,7 +231,7 @@ async def cmd_games_help(message: Message) -> None:
     await message.answer(card("❓ Помощь по играм", help_body))
 
 
-@router.callback_query(F.data == "games_back")
+@router.callback_query(F.data.in_({"games_back", "open_games_menu"}))
 async def callback_games_back(cb: CallbackQuery) -> None:
     await cb.answer()
     text = card("🎮 Mini-игры", "Выберите игру:")
@@ -3992,12 +3992,24 @@ async def game_wordle_start(cb: CallbackQuery) -> None:
     _set("wordle", key, {"secret": secret, "guesses": [], "msg_id": msg.message_id, "active": True})
 
 
-@router.message(F.text, lambda msg: len(msg.text.strip()) == 5 and not msg.text.startswith("/"))
+def _has_active_wordle(message: Message) -> bool:
+    """Filter: match only when this user has an active Wordle session."""
+    if not message.text or not message.from_user:
+        return False
+    text = message.text.strip()
+    if len(text) != 5 or text.startswith("/"):
+        return False
+    key = _key(message.chat.id, message.from_user.id)
+    sess = _get("wordle", key)
+    return bool(sess and sess.get("active"))
+
+
+@router.message(_has_active_wordle)
 async def game_wordle_guess(message: Message) -> None:
     chat_id = message.chat.id
     uid = message.from_user.id
     key = _key(chat_id, uid)
-    
+
     sess = _get("wordle", key)
     if not sess or not sess.get("active"):
         return

@@ -398,10 +398,52 @@ async def cmd_bid(message: Message) -> None:
     await handler(message, rest)
 
 
-@router.message(Command("timer_help", "help", ignore_case=True))
-async def cmd_help_legacy(message: Message) -> None:
+@router.message(Command("timer_help", ignore_case=True))
+async def cmd_timer_help(message: Message) -> None:
     _cleanup_command(message)
-    await _help(message, "")
+    if await permissions.deny_if_cannot_manage(message):
+        return
+    try:
+        banner = FSInputFile("assets/welcome_banner.png")
+        sent = await message.answer_photo(
+            banner,
+            caption=phrases.help_text(),
+        )
+        _schedule_delete(sent)
+    except Exception:
+        await _answer_temp(message, phrases.help_text())
+
+
+@router.message(Command("help", ignore_case=True))
+async def cmd_help(message: Message) -> None:
+    _cleanup_command(message)
+    if getattr(message.chat, "type", None) != "private":
+        if await permissions.deny_if_cannot_manage(message):
+            return
+        try:
+            banner = FSInputFile("assets/welcome_banner.png")
+            sent = await message.answer_photo(
+                banner,
+                caption=phrases.help_text(),
+            )
+            _schedule_delete(sent)
+        except Exception:
+            await _answer_temp(message, phrases.help_text())
+    else:
+        help_mortal = (
+            "🤖 <b>BidTimerBot — Помощь пользователю</b>\n\n"
+            "Я умею отвечать на вопросы с помощью искусственного интеллекта Gemini и запускать весёлые мини-игры!\n\n"
+            "📌 <b>Основные команды:</b>\n"
+            "▸ /menu — Открыть главное меню бота (игры, ИИ-чат, профиль и рефералы).\n"
+            "▸ /games — Быстрый запуск списка мини-игр.\n"
+            "▸ /ai — Быстрый доступ к чат-боту Gemini.\n"
+            "▸ /help — Показать это справочное сообщение.\n\n"
+            "🎮 <b>Как играть:</b>\n"
+            "Введите /games в чате (или нажмите кнопку в меню), выберите нужную игру и следуйте инструкциям на кнопках. Игровой процесс происходит прямо в меню.\n\n"
+            "🤖 <b>ИИ-Чат с Gemini:</b>\n"
+            "Введите /ai, нажмите «Начать диалог» и пишите любые текстовые сообщения. У вас есть 10 бесплатных вопросов в день. Чтобы получить больше лимита, приглашайте друзей по реферальной ссылке!"
+        )
+        await message.answer(help_mortal)
 
 
 @router.message(Command("timer_status", "status", ignore_case=True))
@@ -604,6 +646,143 @@ async def cmd_broadcast(message: Message) -> None:
 
 # ── ИИ И РЕФЕРАЛЫ ───────────────────────────────────────────────────────────
 
+# ── МЕНЮ, ИИ И РЕФЕРАЛЫ ───────────────────────────────────────────────────────
+
+async def _send_main_menu(message_or_cb, user, invited_msg=""):
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, FSInputFile
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎮 Игры", callback_data="open_games_menu"), InlineKeyboardButton(text="🤖 ИИ-Чат", callback_data="open_ai_menu")],
+        [InlineKeyboardButton(text="👥 Рефералы", callback_data="open_referrals_menu"), InlineKeyboardButton(text="👤 Профиль", callback_data="open_profile_menu")],
+        [InlineKeyboardButton(text="⚙️ Настройки", callback_data="open_settings_menu")]
+    ])
+    
+    name = user.full_name or "Игрок"
+    text = (
+        f"👋 <b>Приветствуем, {name}, в BidTimerBot!</b>\n\n"
+        f"Здесь вы можете играть в увлекательные мини-игры, общаться с ИИ Gemini, "
+        f"приглашать друзей для увеличения лимитов и многое другое!\n\n"
+        f"Выберите интересующий раздел ниже:{invited_msg}"
+    )
+    
+    banner = FSInputFile("assets/dashboard_banner.png")
+    
+    if isinstance(message_or_cb, CallbackQuery):
+        cb = message_or_cb
+        try:
+            if cb.message.photo:
+                await cb.message.edit_caption(caption=text, reply_markup=kb)
+            else:
+                await cb.message.edit_text(text, reply_markup=kb)
+        except Exception:
+            try:
+                await cb.message.answer_photo(banner, caption=text, reply_markup=kb)
+                await cb.message.delete()
+            except Exception:
+                await cb.message.answer(text, reply_markup=kb)
+    else:
+        message = message_or_cb
+        try:
+            await message.answer_photo(banner, caption=text, reply_markup=kb)
+        except Exception:
+            await message.answer(text, reply_markup=kb)
+
+
+@router.message(Command("menu", ignore_case=True))
+async def cmd_menu(message: Message) -> None:
+    if getattr(message.chat, "type", None) != "private":
+        await message.reply("Главное меню доступно только в личных сообщениях с ботом.")
+        return
+    await _send_main_menu(message, message.from_user)
+
+
+@router.callback_query(F.data == "main_menu")
+async def cb_main_menu(cb: CallbackQuery) -> None:
+    await cb.answer()
+    await _send_main_menu(cb, cb.from_user)
+
+
+@router.callback_query(F.data == "open_profile_menu")
+async def cb_profile(cb: CallbackQuery) -> None:
+    await cb.answer()
+    user = cb.from_user
+    used, limit, extra = await db.get_user_ai_limits(user.id)
+    ref_count = await db.get_referral_count(user.id)
+    
+    text = (
+        f"👤 <b>Ваш Профиль</b>\n\n"
+        f"▸ <b>Имя</b>: {html.escape(user.full_name or '—')}\n"
+        f"▸ <b>Юзернейм</b>: @{html.escape(user.username or '—')}\n"
+        f"▸ <b>Telegram ID</b>: <code>{user.id}</code>\n\n"
+        f"📊 <b>Статистика ИИ</b>:\n"
+        f"▸ Вопросов сегодня: <b>{used}</b> / <b>{limit}</b>\n"
+        f"▸ Дополнительный лимит: +<b>{extra}</b>\n"
+        f"▸ Приглашено друзей: <b>{ref_count}</b>\n"
+    )
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="◀️ В главное меню", callback_data="main_menu")]
+    ])
+    if cb.message.photo:
+        await cb.message.edit_caption(caption=text, reply_markup=kb)
+    else:
+        await cb.message.edit_text(text, reply_markup=kb)
+
+
+@router.callback_query(F.data == "open_referrals_menu")
+async def cb_referrals(cb: CallbackQuery) -> None:
+    await cb.answer()
+    user = cb.from_user
+    ref_count = await db.get_referral_count(user.id)
+    bot_info = await cb.bot.get_me()
+    ref_link = f"https://t.me/{bot_info.username}?start=ref_{user.id}"
+    
+    text = (
+        f"👥 <b>Реферальная Программа</b>\n\n"
+        f"Приглашайте друзей в бота и получайте пожизненный бонус к дневному лимиту ИИ-вопросов!\n\n"
+        f"🎁 <b>Условия</b>:\n"
+        f"▸ Каждое успешное приглашение друга дает вам <b>+5 вопросов</b> к лимиту каждый день!\n"
+        f"▸ Приглашенный друг также получает приветственный лимит.\n\n"
+        f"📊 <b>Ваши показатели</b>:\n"
+        f"▸ Всего приглашено друзей: <b>{ref_count}</b>\n\n"
+        f"🔗 <b>Ваша ссылка для приглашения</b>:\n"
+        f"<code>{ref_link}</code>\n\n"
+        f"<i>Скопируйте ссылку и отправьте её друзьям!</i>"
+    )
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="◀️ В главное меню", callback_data="main_menu")]
+    ])
+    if cb.message.photo:
+        await cb.message.edit_caption(caption=text, reply_markup=kb)
+    else:
+        await cb.message.edit_text(text, reply_markup=kb)
+
+
+@router.callback_query(F.data == "open_settings_menu")
+async def cb_settings(cb: CallbackQuery) -> None:
+    await cb.answer()
+    bot_info = await cb.bot.get_me()
+    add_to_group_url = f"https://t.me/{bot_info.username}?startgroup=true"
+    
+    text = (
+        f"⚙️ <b>Настройки и информация</b>\n\n"
+        f"🤖 <b>Версия бота</b>: v2.2\n"
+        f"🌐 <b>Язык интерфейса</b>: Русский\n\n"
+        f"📢 <b>Таймеры в группах</b>:\n"
+        f"Вы можете добавить этого бота в свои группы Telegram для автоматического отслеживания ставок за Telegram Stars.\n\n"
+        f"<i>Для управления таймером используйте админ-панель в группах.</i>"
+    )
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Добавить в группу", url=add_to_group_url)],
+        [InlineKeyboardButton(text="◀️ В главное меню", callback_data="main_menu")]
+    ])
+    if cb.message.photo:
+        await cb.message.edit_caption(caption=text, reply_markup=kb)
+    else:
+        await cb.message.edit_text(text, reply_markup=kb)
+
+
 active_ai_chats = set()
 
 
@@ -659,26 +838,17 @@ async def cmd_start(message: Message) -> None:
             except Exception:
                 pass
 
-    welcome_text = (
-        f"👋 <b>Приветствуем в BidTimerBot!</b>\n\n"
-        f"Я умею вести таймеры ставок за Telegram Stars в группах, "
-        f"а также развлекать пользователей отличными mini-играми.\n\n"
-        f"🤖 Чтобы пообщаться со встроенным ИИ Gemini, отправьте команду /ai.{invited_msg}"
-    )
-    await message.answer(welcome_text)
+    await _send_main_menu(message, message.from_user, invited_msg)
 
 
-@router.message(Command("ai", "ии", ignore_case=True))
-async def cmd_ai(message: Message) -> None:
-    if getattr(message.chat, "type", None) != "private":
-        await message.reply("Общение с ИИ доступно только в личных сообщениях с ботом.")
-        return
-        
-    user_id = message.from_user.id
+async def _render_ai_menu(message_or_cb, user):
+    user_id = user.id
     used, limit, extra = await db.get_user_ai_limits(user_id)
     ref_count = await db.get_referral_count(user_id)
-    
-    bot_info = await message.bot.get_me()
+    bot_info = await message_or_cb.bot.get_me() if isinstance(message_or_cb, CallbackQuery) else message_or_cb.bot.get_me()
+    # bot_info is a coroutine or object, await it
+    if hasattr(bot_info, "__await__"):
+        bot_info = await bot_info
     ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
     
     stats_text = (
@@ -692,13 +862,34 @@ async def cmd_ai(message: Message) -> None:
         f"<code>{ref_link}</code>\n"
         f"<i>Отправьте ссылку другу. За каждого нового пользователя вы будете получать +5 вопросов к лимиту каждый день!</i>"
     )
-    
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💬 Начать диалог", callback_data="ai_start_chat")],
-        [InlineKeyboardButton(text="◀️ В меню", callback_data="games_back")]
+        [InlineKeyboardButton(text="◀️ В главное меню", callback_data="main_menu")]
     ])
-    await message.answer(stats_text, reply_markup=kb)
+    
+    if isinstance(message_or_cb, CallbackQuery):
+        cb = message_or_cb
+        if cb.message.photo:
+            await cb.message.edit_caption(caption=stats_text, reply_markup=kb)
+        else:
+            await cb.message.edit_text(stats_text, reply_markup=kb)
+    else:
+        await message_or_cb.answer(stats_text, reply_markup=kb)
+
+
+@router.message(Command("ai", "ии", ignore_case=True))
+async def cmd_ai(message: Message) -> None:
+    if getattr(message.chat, "type", None) != "private":
+        await message.reply("Общение с ИИ доступно только в личных сообщениях с ботом.")
+        return
+    await _render_ai_menu(message, message.from_user)
+
+
+@router.callback_query(F.data == "open_ai_menu")
+async def cb_open_ai_menu(cb: CallbackQuery) -> None:
+    await cb.answer()
+    await _render_ai_menu(cb, cb.from_user)
 
 
 from aiogram.types import CallbackQuery
@@ -713,12 +904,20 @@ async def cb_ai_start_chat(cb: CallbackQuery) -> None:
         [InlineKeyboardButton(text="◀️ Выйти из чата", callback_data="ai_exit_chat")]
     ])
     
-    await cb.message.edit_text(
-        "🤖 <b>Диалог с ИИ запущен!</b>\n\n"
-        "Отправьте мне любое текстовое сообщение, и я отвечу.\n\n"
-        "<i>Для выхода нажмите кнопку ниже.</i>",
-        reply_markup=kb
-    )
+    if cb.message.photo:
+        await cb.message.edit_caption(
+            caption="🤖 <b>Диалог с ИИ запущен!</b>\n\n"
+                    "Отправьте мне любое текстовое сообщение, и я отвечу.\n\n"
+                    "<i>Для выхода нажмите кнопку ниже.</i>",
+            reply_markup=kb
+        )
+    else:
+        await cb.message.edit_text(
+            "🤖 <b>Диалог с ИИ запущен!</b>\n\n"
+            "Отправьте мне любое текстовое сообщение, и я отвечу.\n\n"
+            "<i>Для выхода нажмите кнопку ниже.</i>",
+            reply_markup=kb
+        )
 
 
 @router.callback_query(F.data == "ai_exit_chat")
@@ -726,30 +925,7 @@ async def cb_ai_exit_chat(cb: CallbackQuery) -> None:
     await cb.answer()
     user_id = cb.from_user.id
     active_ai_chats.discard(user_id)
-    
-    used, limit, extra = await db.get_user_ai_limits(user_id)
-    ref_count = await db.get_referral_count(user_id)
-    bot_info = await cb.bot.get_me()
-    ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
-    
-    stats_text = (
-        f"🤖 <b>Интеллектуальный Ассистент Gemini</b>\n\n"
-        f"Здесь вы можете общаться с искусственным интеллектом!\n\n"
-        f"📊 <b>Ваша суточная квота вопросов:</b>\n"
-        f"▸ Доступно сегодня: <b>{max(0, limit - used)}</b> из <b>{limit}</b>\n"
-        f"▸ Использовано сегодня: <b>{used}</b>\n"
-        f"▸ Приглашено друзей: <b>{ref_count}</b> (+{extra} к лимиту)\n\n"
-        f"🔗 <b>Ваша реферальная ссылка:</b>\n"
-        f"<code>{ref_link}</code>\n"
-        f"<i>Отправьте ссылку другу. За каждого нового пользователя вы будете получать +5 вопросов к лимиту каждый день!</i>"
-    )
-    
-    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💬 Начать диалог", callback_data="ai_start_chat")],
-        [InlineKeyboardButton(text="◀️ В меню", callback_data="games_back")]
-    ])
-    await cb.message.edit_text(stats_text, reply_markup=kb)
+    await _render_ai_menu(cb, cb.from_user)
 
 
 @router.message(F.text, F.chat.type == "private")
