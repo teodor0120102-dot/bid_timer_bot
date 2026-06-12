@@ -114,6 +114,19 @@ def _kb(buttons: list[list[InlineKeyboardButton]]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+async def _edit(cb: CallbackQuery, text: str, reply_markup: Optional[InlineKeyboardMarkup] = None) -> Message:
+    try:
+        if cb.message.photo:
+            return await cb.message.edit_caption(caption=text, reply_markup=reply_markup)
+        else:
+            return await cb.message.edit_text(text, reply_markup=reply_markup)
+    except Exception:
+        try:
+            return await cb.message.answer(text, reply_markup=reply_markup)
+        except Exception:
+            return await cb.bot.send_message(cb.message.chat.id, text, reply_markup=reply_markup)
+
+
 # ──────────────────────────────────────────────
 # /games — главное меню
 # ──────────────────────────────────────────────
@@ -143,6 +156,9 @@ GAMES_MENU = [
     ("🧠 Мемори", "game_mem"),
     ("🐉 Рейд-босс", "game_raid"),
     ("🏗 Башня риска", "game_tower"),
+    ("🤖 ИИ-Чат", "game_ai"),
+    ("📝 Вордли (Слова)", "game_wordle"),
+    ("🪙 Счастливая карта", "game_lucky"),
 ]
 
 
@@ -240,7 +256,7 @@ async def callback_games_back(cb: CallbackQuery) -> None:
 @router.callback_query(F.data == "game_coin")
 async def game_coin(cb: CallbackQuery) -> None:
     await cb.answer()
-    msg = await cb.message.answer(card("🪙 Орёл и Решка", "Подбрасываю монету..."))
+    msg = await _edit(cb, card("🪙 Орёл и Решка", "Подбрасываю монету..."))
     frames = ["🪙 . . .", "  . 🪙 . .", "  . . 🪙 .", "  . . . 🪙", "  . . 🪙 .", "  . 🪙 . ."]
     for f in frames:
         await asyncio.sleep(0.4)
@@ -306,7 +322,8 @@ async def game_race_lobby(cb: CallbackQuery) -> None:
         "active": False
     })
     players_str = "\n".join(f"▸ {_mention(p)}" for p in sess["players"])
-    await cb.message.answer(
+    await _edit(
+        cb,
         card("🏎️ Гоночная трасса (Лобби)", f"Ожидание игроков (2-4 игрока)...\n\nУчастники:\n{players_str}"),
         reply_markup=_get_lobby_kb("rc", sess["players"], chat_id, uid)
     )
@@ -477,7 +494,8 @@ async def game_bj_lobby(cb: CallbackQuery) -> None:
         "active": False
     })
     players_str = "\n".join(f"▸ {_mention(p)}" for p in sess["players"])
-    await cb.message.answer(
+    await _edit(
+        cb,
         card("🃏 Блэкджек (Лобби)", f"Ожидание игроков (2-4 игрока)...\n\nУчастники:\n{players_str}"),
         reply_markup=_get_lobby_kb("bj", sess["players"], chat_id, uid)
     )
@@ -645,7 +663,8 @@ async def game_bomb_lobby(cb: CallbackQuery) -> None:
         "active": False
     })
     players_str = "\n".join(f"▸ {_mention(p)}" for p in sess["players"])
-    await cb.message.answer(
+    await _edit(
+        cb,
         card("💣 Бомба (Лобби)", f"Ожидание игроков (2-4 игрока)...\n\nУчастники:\n{players_str}"),
         reply_markup=_get_lobby_kb("bm", sess["players"], chat_id, uid)
     )
@@ -781,7 +800,8 @@ async def game_dice_lobby(cb: CallbackQuery) -> None:
         "active": False
     })
     players_str = "\n".join(f"▸ {_mention(p)}" for p in sess["players"])
-    await cb.message.answer(
+    await _edit(
+        cb,
         card("🎲 Покер на костях (Лобби)", f"Ожидание игроков (2-4 игрока)...\n\nУчастники:\n{players_str}"),
         reply_markup=_get_lobby_kb("dp", sess["players"], chat_id, uid)
     )
@@ -944,7 +964,8 @@ async def game_ttt_lobby(cb: CallbackQuery) -> None:
         "active": False
     })
     players_str = "\n".join(f"▸ {_mention(p)}" for p in sess["players"])
-    await cb.message.answer(
+    await _edit(
+        cb,
         card("❌ Крестики-нолики (Лобби)", f"Ожидание соперника (2 игрока)...\n\nУчастники:\n{players_str}"),
         reply_markup=_kb([
             [_btn("⚔️ Принять вызов", "jo_tt")],
@@ -1034,7 +1055,7 @@ _8BALL_ANSWERS = [
 @router.callback_query(F.data == "game_8ball")
 async def game_8ball(cb: CallbackQuery) -> None:
     await cb.answer()
-    msg = await cb.message.answer(card("🎱 Магический шар", "🔮 Концентрирую энергию..."))
+    msg = await _edit(cb, card("🎱 Магический шар", "🔮 Концентрирую энергию..."))
     frames = ["🔮 .", "🔮 . .", "🔮 . . .", "✨ . . .", "✨ ✨ . .", "✨ ✨ ✨ ."]
     for f in frames:
         await asyncio.sleep(0.35)
@@ -1061,7 +1082,8 @@ async def game_gnum_menu(cb: CallbackQuery) -> None:
         [_btn("👥 3 Игрока", "gn_mode_3"), _btn("👥 4 Игрока", "gn_mode_4")],
         [_btn("◀️ В меню", "games_back")]
     ])
-    await cb.message.answer(
+    await _edit(
+        cb,
         card("🔢 Угадай число", "Выберите количество игроков:"),
         reply_markup=kb
     )
@@ -1077,7 +1099,8 @@ async def game_gnum_select_mode(cb: CallbackQuery) -> None:
     if mode == 1:
         key = _key(chat_id, uid)
         secret = random.randint(1, 100)
-        msg = await cb.message.answer(
+        msg = await _edit(
+            cb,
             card(
                 "🔢 Угадай число",
                 "Я загадал число от <b>1</b> до <b>100</b>.\n"
@@ -1095,7 +1118,8 @@ async def game_gnum_select_mode(cb: CallbackQuery) -> None:
             "active": False
         })
         players_str = "\n".join(f"▸ {_mention(p)}" for p in sess["players"])
-        await cb.message.answer(
+        await _edit(
+            cb,
             card(
                 "🔢 Угадай число (Лобби)",
                 f"Режим: <b>{mode} игроков</b>\n"
@@ -1158,7 +1182,8 @@ async def _game_gnum_start_mp(cb: CallbackQuery, sess: dict) -> None:
     players = sess["players"]
     secret = random.randint(1, 100)
     
-    msg = await cb.message.answer(
+    msg = await _edit(
+        cb,
         card(
             "🔢 Угадай число (Мультиплеер)",
             f"Я загадал число от <b>1</b> до <b>100</b>.\n"
@@ -1316,7 +1341,8 @@ async def game_rps_mode_menu(cb: CallbackQuery) -> None:
         [_btn("👥 Дуэль 1х1", "rps_duel_lobby")],
         [_btn("◀️ В меню", "games_back")]
     ])
-    await cb.message.answer(
+    await _edit(
+        cb,
         card("✊ Камень-Ножницы-Бумага", "Выберите режим игры:"),
         reply_markup=kb
     )
@@ -1329,7 +1355,7 @@ async def game_rps_bot_start(cb: CallbackQuery) -> None:
         [_btn("✊ Камень", "rps_b_r"), _btn("✌️ Ножницы", "rps_b_s"), _btn("✋ Бумага", "rps_b_p")],
         [_btn("◀️ В меню", "games_back")]
     ])
-    await cb.message.answer(card("✊ Камень-Ножницы-Бумага", "Сделай свой выбор (игра против бота):"), reply_markup=kb)
+    await _edit(cb, card("✊ Камень-Ножницы-Бумага", "Сделай свой выбор (игра против бота):"), reply_markup=kb)
 
 
 @router.callback_query(F.data.startswith("rps_b_"))
@@ -1356,7 +1382,7 @@ async def game_rps_bot_play(cb: CallbackQuery) -> None:
     try:
         await cb.message.edit_text(card("✊ Камень-Ножницы-Бумага", text), reply_markup=kb)
     except Exception:
-        await cb.message.answer(card("✊ Камень-Ножницы-Бумага", text), reply_markup=kb)
+        await _edit(cb, card("✊ Камень-Ножницы-Бумага", text), reply_markup=kb)
 
 
 @router.callback_query(F.data == "rps_duel_lobby")
@@ -1370,7 +1396,8 @@ async def game_rps_lobby(cb: CallbackQuery) -> None:
         "active": False
     })
     players_str = "\n".join(f"▸ {_mention(p)}" for p in sess["players"])
-    await cb.message.answer(
+    await _edit(
+        cb,
         card("✊ КНБ: Дуэль (Лобби)", f"Ожидание оппонента (2 игрока)...\n\nУчастники:\n{players_str}"),
         reply_markup=_get_lobby_kb("rps", sess["players"], chat_id, uid)
     )
@@ -1448,7 +1475,8 @@ async def _game_rps_start_mp(cb: CallbackQuery, sess: dict) -> None:
     })
     _pop("rps_lobby", chat_key)
     
-    await cb.message.answer(
+    await _edit(
+        cb,
         card(
             "✊ КНБ: Дуэль",
             f"Игроки: {_mention(p1)} vs {_mention(p2)}\n\n"
@@ -1593,7 +1621,7 @@ async def game_mine_start(cb: CallbackQuery) -> None:
     uid = cb.from_user.id
     key = _key(cb.message.chat.id, uid)
     sess = _set("mine", key, _mine_board())
-    await cb.message.answer(_mine_text(sess), reply_markup=_mine_kb(sess, uid))
+    await _edit(cb, _mine_text(sess), reply_markup=_mine_kb(sess, uid))
 
 
 @router.callback_query(F.data.startswith("mn_"))
@@ -1662,7 +1690,7 @@ async def game_hilo_start(cb: CallbackQuery) -> None:
         [_btn("⬆️ Больше", f"hl_{uid}_h"), _btn("⬇️ Меньше", f"hl_{uid}_l")],
         [_btn("◀️ В меню", "games_back")]
     ])
-    await cb.message.answer(_hilo_text(card_str, 0), reply_markup=kb)
+    await _edit(cb, _hilo_text(card_str, 0), reply_markup=kb)
 
 
 @router.callback_query(F.data.startswith("hl_"))
@@ -1736,7 +1764,7 @@ _WHEEL_FRAMES = ["🎡 |", "🎡 /", "🎡 —", "🎡 \\"]
 @router.callback_query(F.data == "game_whl")
 async def game_wheel(cb: CallbackQuery) -> None:
     await cb.answer()
-    msg = await cb.message.answer(card("🎡 Колесо Фортуны", "Кручу колесо..."))
+    msg = await _edit(cb, card("🎡 Колесо Фортуны", "Кручу колесо..."))
     for i in range(8):
         frame = _WHEEL_FRAMES[i % len(_WHEEL_FRAMES)]
         prize_preview = random.choice(_WHEEL_PRIZES)
@@ -1871,7 +1899,8 @@ async def game_hang_menu(cb: CallbackQuery) -> None:
         [_btn("👥 Кооператив (2-4 игр.)", "hang_lobby_start")],
         [_btn("◀️ В меню", "games_back")]
     ])
-    await cb.message.answer(
+    await _edit(
+        cb,
         card("📝 Виселица", "Выберите режим игры:"),
         reply_markup=kb
     )
@@ -1884,7 +1913,7 @@ async def game_hang_sp_start(cb: CallbackQuery) -> None:
     key = _key(cb.message.chat.id, uid)
     word = random.choice(_HANGMAN_WORDS).upper()
     sess = _set("hang", key, {"word": word, "guessed": set(), "wrong": set(), "errors": 0})
-    await cb.message.answer(_hangman_text(sess), reply_markup=_hangman_letter_kb(sess, uid))
+    await _edit(cb, _hangman_text(sess), reply_markup=_hangman_letter_kb(sess, uid))
 
 
 @router.callback_query(F.data == "hang_lobby_start")
@@ -1898,7 +1927,8 @@ async def game_hang_lobby(cb: CallbackQuery) -> None:
         "active": False
     })
     players_str = "\n".join(f"▸ {_mention(p)}" for p in sess["players"])
-    await cb.message.answer(
+    await _edit(
+        cb,
         card("📝 Виселица (Лобби)", f"Ожидание игроков (2-4 игрока)...\n\nУчастники:\n{players_str}"),
         reply_markup=_get_lobby_kb("hg", sess["players"], chat_id, uid)
     )
@@ -1954,7 +1984,8 @@ async def game_hang_start_btn(cb: CallbackQuery) -> None:
     _pop("hang_lobby", chat_key)
     
     await cb.answer("Игра начинается!")
-    await cb.message.answer(
+    await _edit(
+        cb,
         _hangman_text_mp(game_sess),
         reply_markup=_hangman_letter_kb_mp(game_sess)
     )
@@ -2130,10 +2161,16 @@ async def _send_triv_question_mp(message: Message, sess: dict) -> None:
         f"<b>Статус участников:</b>\n" + "\n".join(status_lines)
     )
     
-    await message.answer(
-        card("🧠 Викторина (Мультиплеер)", body),
-        reply_markup=_get_triv_kb_mp(sess)
-    )
+    try:
+        await message.edit_text(
+            card("🧠 Викторина (Мультиплеер)", body),
+            reply_markup=_get_triv_kb_mp(sess)
+        )
+    except Exception:
+        await message.answer(
+            card("🧠 Викторина (Мультиплеер)", body),
+            reply_markup=_get_triv_kb_mp(sess)
+        )
 
 
 @router.callback_query(F.data == "game_triv")
@@ -2144,7 +2181,8 @@ async def game_trivia_menu(cb: CallbackQuery) -> None:
         [_btn("👥 Мультиплеер (2-4 игр.)", "triv_lobby_start")],
         [_btn("◀️ В меню", "games_back")]
     ])
-    await cb.message.answer(
+    await _edit(
+        cb,
         card("🧠 Викторина", "Выберите режим игры:"),
         reply_markup=kb
     )
@@ -2157,7 +2195,7 @@ async def game_trivia_sp_start(cb: CallbackQuery) -> None:
     key = _key(cb.message.chat.id, uid)
     questions = random.sample(_TRIVIA_QUESTIONS, min(10, len(_TRIVIA_QUESTIONS)))
     sess = _set("triv", key, {"questions": questions, "qi": 0, "score": 0, "total": len(questions)})
-    await cb.message.answer(_trivia_text(sess), reply_markup=_trivia_kb(sess, uid))
+    await _edit(cb, _trivia_text(sess), reply_markup=_trivia_kb(sess, uid))
 
 
 @router.callback_query(F.data == "triv_lobby_start")
@@ -2171,7 +2209,8 @@ async def game_trivia_lobby(cb: CallbackQuery) -> None:
         "active": False
     })
     players_str = "\n".join(f"▸ {_mention(p)}" for p in sess["players"])
-    await cb.message.answer(
+    await _edit(
+        cb,
         card("🧠 Викторина (Лобби)", f"Ожидание игроков (2-4 игрока)...\n\nУчастники:\n{players_str}"),
         reply_markup=_get_lobby_kb("tv", sess["players"], chat_id, uid)
     )
@@ -2475,7 +2514,8 @@ async def game_snake(cb: CallbackQuery) -> None:
         "game_over": False
     })
     
-    await cb.message.answer(
+    await _edit(
+        cb,
         _render_snake_board(sess),
         reply_markup=_get_snake_kb(uid)
     )
@@ -2570,7 +2610,8 @@ async def game_roulette_start(cb: CallbackQuery) -> None:
     chat_key = (cb.message.chat.id,)
     sess = _get("roul", chat_key)
     if sess and sess.get("active"):
-        await cb.message.answer(
+        await _edit(
+            cb,
             card("🎪 Русская рулетка", "Игра уже идёт! Жми кнопку 🔫")
         )
         return
@@ -2585,7 +2626,8 @@ async def game_roulette_start(cb: CallbackQuery) -> None:
         [_btn("🔫 Крутить барабан", "rl_spin")],
         [_btn("◀️ В меню", "games_back")]
     ])
-    await cb.message.answer(
+    await _edit(
+        cb,
         card(
             "🎪 Русская рулетка",
             "Револьвер заряжен! Одна пуля в барабане.\n"
@@ -2655,7 +2697,7 @@ async def game_duel_start(cb: CallbackQuery) -> None:
     chat_key = (cb.message.chat.id,)
     old = _get("duel", chat_key)
     if old and old.get("active") and time.time() - old.get("_ts", 0) < 60:
-        await cb.message.answer(card("🏆 Дуэль", "Дуэль уже идёт! Ждём участников."))
+        await _edit(cb, card("🏆 Дуэль", "Дуэль уже идёт! Ждём участников."))
         return
     initiator = cb.from_user
     sess = _set("duel", chat_key, {
@@ -2673,7 +2715,8 @@ async def game_duel_start(cb: CallbackQuery) -> None:
         [_btn("⚔️ Принять вызов!", "du_join")],
         [_btn("◀️ В меню", "games_back")]
     ])
-    await cb.message.answer(
+    await _edit(
+        cb,
         card("🏆 Дуэль", f"{p1_name} бросает вызов!\n\nЖмите кнопку, чтобы принять!"),
         reply_markup=kb,
     )
@@ -2797,7 +2840,7 @@ _FORTUNES = [
 @router.callback_query(F.data == "game_fort")
 async def game_fortune(cb: CallbackQuery) -> None:
     await cb.answer()
-    msg = await cb.message.answer(card("🔮 Предсказание", "Заглядываю в будущее..."))
+    msg = await _edit(cb, card("🔮 Предсказание", "Заглядываю в будущее..."))
     anim = [
         "🔮 Настраиваю кристалл...",
         "🌙 Читаю звёзды...",
@@ -2829,7 +2872,7 @@ async def game_crash_start(cb: CallbackQuery) -> None:
     key = _key(cb.message.chat.id, uid)
     old = _get("crsh", key)
     if old and old.get("active"):
-        await cb.message.answer(card("💰 Краш", "У тебя уже идёт раунд! Жми «Забрать»!"))
+        await _edit(cb, card("💰 Краш", "У тебя уже идёт раунд! Жми «Забрать»!"))
         return
     crash_at = round(random.uniform(1.1, 5.0), 2)
     # Нормализуем вероятность — чаще краш на низких множителях
@@ -2840,7 +2883,8 @@ async def game_crash_start(cb: CallbackQuery) -> None:
         [_btn("💵 Забрать", f"cr_{uid}_out")],
         [_btn("◀️ В меню", "games_back")]
     ])
-    msg = await cb.message.answer(
+    msg = await _edit(
+        cb,
         card("💰 Краш", f"Множитель: <b>1.00x</b>\n\n📈 Растёт..."),
         reply_markup=kb,
     )
@@ -2977,7 +3021,7 @@ async def game_chest_start(cb: CallbackQuery) -> None:
     uid = cb.from_user.id
     key = _key(cb.message.chat.id, uid)
     sess = _set("chest", key, _chest_board())
-    await cb.message.answer(_chest_text(sess), reply_markup=_chest_kb(sess, uid))
+    await _edit(cb, _chest_text(sess), reply_markup=_chest_kb(sess, uid))
 
 
 @router.callback_query(F.data.startswith("ch_"))
@@ -3122,7 +3166,7 @@ async def game_2048_start(cb: CallbackQuery) -> None:
     uid = cb.from_user.id
     key = _key(cb.message.chat.id, uid)
     sess = _set("g2048", key, {"board": _2048_new_board(), "score": 0})
-    await cb.message.answer(_2048_text(sess), reply_markup=_2048_kb(uid))
+    await _edit(cb, _2048_text(sess), reply_markup=_2048_kb(uid))
 
 
 @router.callback_query(F.data.startswith("g2048_"))
@@ -3203,7 +3247,7 @@ async def game_memory_start(cb: CallbackQuery) -> None:
     uid = cb.from_user.id
     key = _key(cb.message.chat.id, uid)
     sess = _set("memory", key, _memory_new())
-    await cb.message.answer(_memory_text(sess), reply_markup=_memory_kb(sess, uid))
+    await _edit(cb, _memory_text(sess), reply_markup=_memory_kb(sess, uid))
 
 
 @router.callback_query(F.data.startswith("mem_"))
@@ -3327,10 +3371,10 @@ async def game_raid_start(cb: CallbackQuery) -> None:
     chat_key = (cb.message.chat.id,)
     sess = _get("raid", chat_key)
     if sess and sess.get("active") and sess["hp"] > 0:
-        await cb.message.answer(_raid_text(sess), reply_markup=_raid_kb())
+        await _edit(cb, _raid_text(sess), reply_markup=_raid_kb())
         return
     sess = _set("raid", chat_key, _raid_new())
-    await cb.message.answer(_raid_text(sess), reply_markup=_raid_kb())
+    await _edit(cb, _raid_text(sess), reply_markup=_raid_kb())
 
 
 @router.callback_query(F.data.startswith("raid_"))
@@ -3433,7 +3477,7 @@ async def game_tower_start(cb: CallbackQuery) -> None:
     uid = cb.from_user.id
     key = _key(cb.message.chat.id, uid)
     sess = _set("tower", key, _tower_new())
-    await cb.message.answer(_tower_text(sess), reply_markup=_tower_kb(uid))
+    await _edit(cb, _tower_text(sess), reply_markup=_tower_kb(uid))
 
 
 @router.callback_query(F.data.startswith("tw_"))
@@ -3503,6 +3547,608 @@ async def game_tower_action(cb: CallbackQuery) -> None:
     _set("tower", key, sess)
     await cb.answer(f"+{reward}")
     await cb.message.edit_text(_tower_text(sess), reply_markup=_tower_kb(uid))
+
+
+# ──────────────────────────────────────────────
+# 26. 🤖 ИИ-Чат (Интеграция с handlers)
+# ──────────────────────────────────────────────
+@router.callback_query(F.data == "game_ai")
+async def game_ai_start(cb: CallbackQuery) -> None:
+    await cb.answer()
+    user_id = cb.from_user.id
+    
+    import database as db
+    used, limit, extra = await db.get_user_ai_limits(user_id)
+    ref_count = await db.get_referral_count(user_id)
+    bot_info = await cb.bot.get_me()
+    ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
+    
+    stats_text = (
+        f"🤖 <b>Интеллектуальный Ассистент Gemini</b>\n\n"
+        f"Здесь вы можете общаться с искусственным интеллектом!\n\n"
+        f"📊 <b>Ваша суточная квота вопросов:</b>\n"
+        f"▸ Доступно сегодня: <b>{max(0, limit - used)}</b> из <b>{limit}</b>\n"
+        f"▸ Использовано сегодня: <b>{used}</b>\n"
+        f"▸ Приглашено друзей: <b>{ref_count}</b> (+{extra} к лимиту)\n\n"
+        f"🔗 <b>Ваша реферальная ссылка:</b>\n"
+        f"<code>{ref_link}</code>\n"
+        f"<i>Отправьте ссылку другу. За каждого нового пользователя вы будете получать +5 вопросов к лимиту каждый день!</i>"
+    )
+    
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💬 Начать диалог", callback_data="ai_start_chat")],
+        [InlineKeyboardButton(text="◀️ В меню", callback_data="games_back")]
+    ])
+    
+    if getattr(cb.message.chat, "type", None) != "private":
+        await _edit(
+            cb,
+            card(
+                "🤖 ИИ-Чат",
+                "Общение с ИИ доступно только в личных сообщениях с ботом, чтобы не засорять чат группы."
+            ),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💬 Написать боту в ЛС", url=f"https://t.me/{bot_info.username}?start=ai")],
+                [InlineKeyboardButton(text="◀️ В меню", callback_data="games_back")]
+            ])
+        )
+    else:
+        await _edit(cb, stats_text, reply_markup=kb)
+
+
+# ──────────────────────────────────────────────
+# 27. 🕵️ Шпион (Находка для шпиона)
+# ──────────────────────────────────────────────
+SPY_LOCATIONS = [
+    "Отель 🏨", "Банк 🏦", "Космическая станция 🚀", "Подводная лодка 🐳",
+    "Супермаркет 🛒", "Ресторан 🍽", "Школа 🏫", "Пассажирский поезд 🚂",
+    "Больница 🏥", "Воинская часть 💂", "Театр 🎭", "База на Луне 🌙"
+]
+
+
+@router.callback_query(F.data == "game_spy")
+async def game_spy_menu(cb: CallbackQuery) -> None:
+    await cb.answer()
+    chat_id = cb.message.chat.id
+    uid = cb.from_user.id
+    chat_key = (chat_id,)
+    
+    sess = _set("spy_lobby", chat_key, {
+        "players": [cb.from_user],
+        "active": False
+    })
+    
+    players_str = "\n".join(f"▸ {_mention(p)}" for p in sess["players"])
+    await _edit(
+        cb,
+        card(
+            "🕵️ Шпион (Лобби)",
+            f"Режим: <b>3-4+ игроков</b>\n"
+            f"Ожидание участников...\n\n"
+            f"Участники:\n{players_str}"
+        ),
+        reply_markup=_get_lobby_kb("sp", sess["players"], chat_id, uid)
+    )
+
+
+@router.callback_query(F.data == "jo_sp")
+async def game_spy_join(cb: CallbackQuery) -> None:
+    chat_key = (cb.message.chat.id,)
+    sess = _get("spy_lobby", chat_key)
+    if not sess or sess.get("active"):
+        await cb.answer("Лобби не найдено или игра уже началась!", show_alert=True)
+        return
+    if cb.from_user.id in [p.id for p in sess["players"]]:
+        await cb.answer("Ты уже в лобби!", show_alert=True)
+        return
+    if len(sess["players"]) >= 12:
+        await cb.answer("Лобби переполнено!", show_alert=True)
+        return
+    
+    sess["players"].append(cb.from_user)
+    _set("spy_lobby", chat_key, sess)
+    await cb.answer("Ты присоединился!")
+    
+    players_str = "\n".join(f"▸ {_mention(p)}" for p in sess["players"])
+    await cb.message.edit_text(
+        card(
+            "🕵️ Шпион (Лобби)",
+            f"Режим: <b>3-4+ игроков</b>\n"
+            f"Ожидание участников...\n\n"
+            f"Участники:\n{players_str}"
+        ),
+        reply_markup=_get_lobby_kb("sp", sess["players"], cb.message.chat.id, sess["players"][0].id)
+    )
+
+
+@router.callback_query(F.data == "st_sp")
+async def game_spy_start(cb: CallbackQuery) -> None:
+    chat_key = (cb.message.chat.id,)
+    sess = _get("spy_lobby", chat_key)
+    if not sess or sess.get("active"):
+        await cb.answer("Лобби не найдено!", show_alert=True)
+        return
+    if len(sess["players"]) < 3:
+        await cb.answer("Нужно как минимум 3 игрока!", show_alert=True)
+        return
+    
+    sess["active"] = True
+    players = sess["players"]
+    _pop("spy_lobby", chat_key)
+    
+    location = random.choice(SPY_LOCATIONS)
+    spy_player = random.choice(players)
+    
+    game_state = {
+        "players": {p.id: {"name": p.full_name, "user": p, "role": "Шпион 🕵️‍♂️" if p.id == spy_player.id else f"Локация: {location}"} for p in players},
+        "spy_id": spy_player.id,
+        "location": location,
+        "votes": {},
+        "guess_made": False,
+        "winner": None,
+        "started_at": time.time(),
+        "msg_id": cb.message.message_id
+    }
+    
+    players_list_str = "\n".join(f"{i+1}. {_mention(p)}" for i, p in enumerate(players))
+    msg_text = card(
+        "🕵️ Шпион (Игра началась!)",
+        f"Игроки в игре:\n{players_list_str}\n\n"
+        f"🤫 Нажмите <b>«🤫 Моя роль»</b> ниже, чтобы тайно узнать роль.\n\n"
+        f"🗣 Обсуждайте локацию и подозреваемых. Задача мирных — найти Шпиона, а задача Шпиона — угадать локацию."
+    )
+    
+    kb = _kb([
+        [_btn("🤫 Моя роль", "sp_role"), _btn("🗳 Проголосовать", "sp_vote_menu")],
+        [_btn("🕵️ Я шпион (угадать локацию)", "sp_guess_menu")],
+        [_btn("❌ Закончить игру", "sp_stop")]
+    ])
+    
+    await _edit(cb, msg_text, reply_markup=kb)
+    _set("spy_game", chat_key, game_state)
+    await cb.answer("Игра началась!")
+
+
+@router.callback_query(F.data == "sp_role")
+async def game_spy_show_role(cb: CallbackQuery) -> None:
+    chat_key = (cb.message.chat.id,)
+    sess = _get("spy_game", chat_key)
+    if not sess:
+        await cb.answer("Игра не найдена!", show_alert=True)
+        return
+    uid = cb.from_user.id
+    if uid not in sess["players"]:
+        await cb.answer("Ты не участвуешь в игре!", show_alert=True)
+        return
+    
+    role = sess["players"][uid]["role"]
+    await cb.answer(f"🤫 Твоя роль:\n{role}", show_alert=True)
+
+
+@router.callback_query(F.data == "sp_vote_menu")
+async def game_spy_vote_menu(cb: CallbackQuery) -> None:
+    chat_key = (cb.message.chat.id,)
+    sess = _get("spy_game", chat_key)
+    if not sess:
+        await cb.answer("Игра не найдена!", show_alert=True)
+        return
+    uid = cb.from_user.id
+    if uid not in sess["players"]:
+        await cb.answer("Ты не участвуешь в игре!", show_alert=True)
+        return
+        
+    buttons = []
+    for pid, pinfo in sess["players"].items():
+        if pid == uid:
+            continue
+        buttons.append([_btn(f"Обвинить {pinfo['name']}", f"sp_vt_{pid}")])
+    buttons.append([_btn("◀️ Назад к игре", "sp_back")])
+    
+    await cb.message.edit_text(
+        card("🗳 Голосование за Шпиона", "Выберите игрока, которого вы подозреваете:"),
+        reply_markup=_kb(buttons)
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data == "sp_back")
+async def game_spy_back(cb: CallbackQuery) -> None:
+    chat_key = (cb.message.chat.id,)
+    sess = _get("spy_game", chat_key)
+    if not sess:
+        await cb.answer("Игра не найдена!", show_alert=True)
+        return
+        
+    players_list_str = "\n".join(f"{i+1}. {_mention(p['user'])}" for i, p in enumerate(sess["players"].values()))
+    msg_text = card(
+        "🕵️ Шпион (Игра началась!)",
+        f"Игроки в игре:\n{players_list_str}\n\n"
+        f"🤫 Нажмите <b>«🤫 Моя роль»</b> ниже, чтобы тайно узнать роль.\n\n"
+        f"🗣 Обсуждайте локацию и подозреваемых. Задача мирных — найти Шпиона, а задача Шпиона — угадать локацию."
+    )
+    
+    kb = _kb([
+        [_btn("🤫 Моя роль", "sp_role"), _btn("🗳 Проголосовать", "sp_vote_menu")],
+        [_btn("🕵️ Я шпион (угадать локацию)", "sp_guess_menu")],
+        [_btn("❌ Закончить игру", "sp_stop")]
+    ])
+    await _edit(cb, msg_text, reply_markup=kb)
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("sp_vt_"))
+async def game_spy_register_vote(cb: CallbackQuery) -> None:
+    chat_key = (cb.message.chat.id,)
+    sess = _get("spy_game", chat_key)
+    if not sess:
+        await cb.answer("Игра не найдена!", show_alert=True)
+        return
+    uid = cb.from_user.id
+    if uid not in sess["players"]:
+        await cb.answer("Ты не участвуешь в игре!", show_alert=True)
+        return
+        
+    accused_id = int(cb.data.split("_")[2])
+    sess["votes"][uid] = accused_id
+    _set("spy_game", chat_key, sess)
+    
+    await cb.answer(f"Голос против {sess['players'][accused_id]['name']} принят!")
+    
+    total_players = len(sess["players"])
+    if len(sess["votes"]) == total_players:
+        vote_counts = {}
+        for voter, accused in sess["votes"].items():
+            vote_counts[accused] = vote_counts.get(accused, 0) + 1
+            
+        max_votes = max(vote_counts.values())
+        voted_players = [k for k, v in vote_counts.items() if v == max_votes]
+        
+        if len(voted_players) > 1:
+            winner_text = (
+                f"💀 <b>Ничья в голосовании!</b> Игроки не сошлись во мнениях.\n\n"
+                f"🕵️‍♂️ Шпион побеждает!\n"
+                f"Шпионом был: {_mention(sess['players'][sess['spy_id']]['user'])}\n"
+                f"Локация была: <b>{sess['location']}</b>"
+            )
+        else:
+            accused_spy = voted_players[0]
+            if accused_spy == sess["spy_id"]:
+                winner_text = (
+                    f"🎉 <b>Шпион раскрыт!</b>\n\n"
+                    f"Мирные жители побеждают!\n"
+                    f"Шпионом был: {_mention(sess['players'][sess['spy_id']]['user'])}\n"
+                    f"Локация была: <b>{sess['location']}</b>"
+                )
+            else:
+                winner_text = (
+                    f"💀 <b>Обвинен мирный житель!</b> Большинство проголосовало против {sess['players'][accused_spy]['name']}.\n\n"
+                    f"🕵️‍♂️ Шпион побеждает!\n"
+                    f"Шпионом был: {_mention(sess['players'][sess['spy_id']]['user'])}\n"
+                    f"Локация была: <b>{sess['location']}</b>"
+                )
+        
+        _pop("spy_game", chat_key)
+        await cb.message.edit_text(
+            card("🕵️ Шпион (Конец игры)", winner_text),
+            reply_markup=_kb([[_btn("◀️ В меню", "games_back")]])
+        )
+    else:
+        voted_names = [sess["players"][voter]["name"] for voter in sess["votes"]]
+        await cb.message.edit_text(
+            card(
+                "🗳 Голосование за Шпиона",
+                f"Проголосовало: <b>{len(sess['votes'])}</b> из <b>{total_players}</b>\n"
+                f"Кто проголосовал: {', '.join(voted_names)}\n\n"
+                f"Ожидаем голоса остальных участников..."
+            ),
+            reply_markup=_kb([
+                [_btn("🗳 Проголосовать", "sp_vote_menu")],
+                [_btn("◀️ Назад к игре", "sp_back")]
+            ])
+        )
+
+
+@router.callback_query(F.data == "sp_guess_menu")
+async def game_spy_guess_menu(cb: CallbackQuery) -> None:
+    chat_key = (cb.message.chat.id,)
+    sess = _get("spy_game", chat_key)
+    if not sess:
+        await cb.answer("Игра не найдена!", show_alert=True)
+        return
+    uid = cb.from_user.id
+    if uid not in sess["players"]:
+        await cb.answer("Ты не участвуешь в игре!", show_alert=True)
+        return
+    if uid != sess["spy_id"]:
+        await cb.answer("Только Шпион может угадывать локацию!", show_alert=True)
+        return
+        
+    buttons = []
+    for i in range(0, len(SPY_LOCATIONS), 2):
+        row = [_btn(SPY_LOCATIONS[i], f"sp_gs_{i}")]
+        if i + 1 < len(SPY_LOCATIONS):
+            row.append(_btn(SPY_LOCATIONS[i+1], f"sp_gs_{i+1}"))
+        buttons.append(row)
+    buttons.append([_btn("◀️ Назад к игре", "sp_back")])
+    
+    await cb.message.edit_text(
+        card(
+            "🕵️ Угадывание локации",
+            "Шпион раскрывает себя! Выберите локацию, в которой, по вашему мнению, вы находитесь. "
+            "Правильный выбор принесёт победу вам, неправильный — мирным жителям."
+        ),
+        reply_markup=_kb(buttons)
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("sp_gs_"))
+async def game_spy_guess_resolve(cb: CallbackQuery) -> None:
+    chat_key = (cb.message.chat.id,)
+    sess = _get("spy_game", chat_key)
+    if not sess:
+        await cb.answer("Игра не найдена!", show_alert=True)
+        return
+    uid = cb.from_user.id
+    if uid != sess["spy_id"]:
+        await cb.answer("Только Шпион может угадывать локацию!", show_alert=True)
+        return
+        
+    loc_idx = int(cb.data.split("_")[2])
+    guessed_loc = SPY_LOCATIONS[loc_idx]
+    
+    if guessed_loc == sess["location"]:
+        result_text = (
+            f"🎉 <b>Шпион угадал локацию!</b>\n\n"
+            f"🕵️‍♂️ Шпион побеждает!\n"
+            f"Шпион: {_mention(sess['players'][sess['spy_id']]['user'])}\n"
+            f"Локация: <b>{guessed_loc}</b>"
+        )
+    else:
+        result_text = (
+            f"💀 <b>Шпион ошибся!</b>\n\n"
+            f"Мирные жители побеждают!\n"
+            f"Шпион: {_mention(sess['players'][sess['spy_id']]['user'])}\n"
+            f"Шпион выбрал: <b>{guessed_loc}</b>\n"
+            f"Настоящая локация: <b>{sess['location']}</b>"
+        )
+        
+    _pop("spy_game", chat_key)
+    await cb.message.edit_text(
+        card("🕵️ Шпион (Конец игры)", result_text),
+        reply_markup=_kb([[_btn("◀️ В меню", "games_back")]])
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data == "sp_stop")
+async def game_spy_stop(cb: CallbackQuery) -> None:
+    chat_key = (cb.message.chat.id,)
+    sess = _get("spy_game", chat_key)
+    if not sess:
+        await cb.answer()
+        return
+    uid = cb.from_user.id
+    if uid not in sess["players"]:
+        await cb.answer("Ты не в игре!", show_alert=True)
+        return
+        
+    _pop("spy_game", chat_key)
+    await cb.message.edit_text(
+        card("🕵️ Шпион", "Игра остановлена одним из участников."),
+        reply_markup=_kb([[_btn("◀️ В меню", "games_back")]])
+    )
+    await cb.answer("Игра завершена.")
+
+
+# ──────────────────────────────────────────────
+# 28. 📝 Вордли (Слова из 5 букв)
+# ──────────────────────────────────────────────
+WORDLE_WORDS = [
+    "книга", "ручка", "город", "школа", "слово", "время", "земля", "жизнь", "океан", 
+    "дождь", "банан", "весна", "замок", "дверь", "песня", "музей", "пирог", "арбуз"
+]
+
+
+def _wordle_render(secret: str, guesses: list[str]) -> str:
+    rows = []
+    for i in range(6):
+        if i < len(guesses):
+            g = guesses[i]
+            row_emojis = []
+            for j in range(5):
+                char = g[j]
+                if secret[j] == char:
+                    row_emojis.append(f"🟩 {char.upper()}")
+                elif char in secret:
+                    row_emojis.append(f"🟨 {char.upper()}")
+                else:
+                    row_emojis.append(f"⬛ {char.upper()}")
+            rows.append("  ".join(row_emojis))
+        else:
+            rows.append("⬜    ⬜    ⬜    ⬜    ⬜")
+    return "\n".join(rows)
+
+
+@router.callback_query(F.data == "game_wordle")
+async def game_wordle_start(cb: CallbackQuery) -> None:
+    await cb.answer()
+    uid = cb.from_user.id
+    key = _key(cb.message.chat.id, uid)
+    secret = random.choice(WORDLE_WORDS)
+    
+    msg = await _edit(
+        cb,
+        card(
+            "📝 Вордли (Слова)",
+            f"Я загадал русское слово из <b>5 букв</b>.\n"
+            f"У вас <b>6 попыток</b>, чтобы угадать его.\n\n"
+            f"{_wordle_render(secret, [])}\n\n"
+            f"<i>Просто отправьте 5-буквенное слово в чат!</i>"
+        ),
+        reply_markup=_kb([[_btn("◀️ В меню", "games_back")]])
+    )
+    _set("wordle", key, {"secret": secret, "guesses": [], "msg_id": msg.message_id, "active": True})
+
+
+@router.message(F.text, lambda msg: len(msg.text.strip()) == 5 and not msg.text.startswith("/"))
+async def game_wordle_guess(message: Message) -> None:
+    chat_id = message.chat.id
+    uid = message.from_user.id
+    key = _key(chat_id, uid)
+    
+    sess = _get("wordle", key)
+    if not sess or not sess.get("active"):
+        return
+        
+    guess = message.text.strip().lower()
+    
+    try:
+        await message.delete()
+    except Exception:
+        pass
+        
+    sess["guesses"].append(guess)
+    secret = sess["secret"]
+    
+    win = (guess == secret)
+    lose = (len(sess["guesses"]) >= 6 and not win)
+    
+    render = _wordle_render(secret, sess["guesses"])
+    
+    if win:
+        sess["active"] = False
+        _pop("wordle", key)
+        text = card(
+            "📝 Вордли (Победа!)",
+            f"🎉 Вы угадали слово: <b>{secret.upper()}</b>!\n\n"
+            f"{render}\n\n"
+            f"Попыток использовано: <b>{len(sess['guesses'])}</b>"
+        )
+        markup = _kb([
+            [_btn("🔄 Играть снова", "game_wordle")],
+            [_btn("◀️ В меню", "games_back")]
+        ])
+    elif lose:
+        sess["active"] = False
+        _pop("wordle", key)
+        text = card(
+            "📝 Вордли (Поражение)",
+            f"💀 Вы не угадали. Загаданное слово было: <b>{secret.upper()}</b>.\n\n"
+            f"{render}"
+        )
+        markup = _kb([
+            [_btn("🔄 Играть снова", "game_wordle")],
+            [_btn("◀️ В меню", "games_back")]
+        ])
+    else:
+        _set("wordle", key, sess)
+        text = card(
+            "📝 Вордли (Слова)",
+            f"Попытка <b>{len(sess['guesses']) + 1}</b> из 6.\n\n"
+            f"{render}\n\n"
+            f"<i>Просто отправьте 5-буквенное слово в чат!</i>"
+        )
+        markup = _kb([[_btn("◀️ В меню", "games_back")]])
+        
+    try:
+        await message.bot.edit_message_text(
+            text,
+            chat_id=chat_id,
+            message_id=sess["msg_id"],
+            reply_markup=markup
+        )
+    except Exception:
+        pass
+
+
+# ──────────────────────────────────────────────
+# 29. 🪙 Счастливая карта
+# ──────────────────────────────────────────────
+@router.callback_query(F.data == "game_lucky")
+async def game_lucky_start(cb: CallbackQuery) -> None:
+    await cb.answer()
+    uid = cb.from_user.id
+    key = _key(cb.message.chat.id, uid)
+    
+    cards = ["🃏", "💣", "📄"]
+    random.shuffle(cards)
+    
+    sess = _set("lucky", key, {
+        "cards": cards,
+        "selected": None,
+        "active": True
+    })
+    
+    kb = _kb([
+        [_btn("🎴 Карта 1", f"lk_ch_{uid}_0"), _btn("🎴 Карта 2", f"lk_ch_{uid}_1"), _btn("🎴 Карта 3", f"lk_ch_{uid}_2")],
+        [_btn("◀️ В меню", "games_back")]
+    ])
+    await _edit(
+        cb,
+        card(
+            "🪙 Счастливая карта",
+            "Перед вами 3 закрытые карты.\n"
+            "🃏 <b>Джокер</b> — победа!\n"
+            "💣 <b>Бомба</b> — поражение!\n"
+            "📄 <b>Пусто</b> — ничья!\n\n"
+            "Выберите одну карту:"
+        ),
+        reply_markup=kb
+    )
+
+
+@router.callback_query(F.data.startswith("lk_ch_"))
+async def game_lucky_choose(cb: CallbackQuery) -> None:
+    parts = cb.data.split("_")
+    uid = int(parts[2])
+    idx = int(parts[3])
+    
+    if cb.from_user.id != uid:
+        await cb.answer("Это не твоя игра!", show_alert=True)
+        return
+        
+    key = _key(cb.message.chat.id, uid)
+    sess = _get("lucky", key)
+    if not sess or not sess.get("active"):
+        await cb.answer()
+        return
+        
+    sess["active"] = False
+    _pop("lucky", key)
+    
+    selected_card = sess["cards"][idx]
+    
+    revealed = []
+    for i, c in enumerate(sess["cards"]):
+        if i == idx:
+            revealed.append(f"👉[{c}]👈")
+        else:
+            revealed.append(f"[{c}]")
+            
+    if selected_card == "🃏":
+        result_text = "🎉 <b>Вы нашли Джокера! Победили!</b>"
+        await cb.answer("🃏 Джокер! Победа!")
+    elif selected_card == "💣":
+        result_text = "💀 <b>Вы наткнулись на бомбу! Поражение!</b>"
+        await cb.answer("💣 Бомба! Поражение!")
+    else:
+        result_text = "📄 <b>Пусто! Ничья!</b>"
+        await cb.answer("📄 Пусто! Ничья!")
+        
+    text = card(
+        "🪙 Счастливая карта",
+        f"Ваш выбор:\n"
+        f"<b>{'  '.join(revealed)}</b>\n\n"
+        f"{result_text}"
+    )
+    
+    kb = _kb([
+        [_btn("🔄 Играть снова", "game_lucky")],
+        [_btn("◀️ В меню", "games_back")]
+    ])
+    await cb.message.edit_text(text, reply_markup=kb)
 
 
 # ──────────────────────────────────────────────

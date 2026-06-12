@@ -89,6 +89,25 @@ async def init_db() -> None:
             )
             """
         )
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_ai_limits (
+                user_id INTEGER PRIMARY KEY,
+                questions_used INTEGER NOT NULL DEFAULT 0,
+                last_used_date TEXT,
+                extra_limit INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_referrals (
+                referred_id INTEGER PRIMARY KEY,
+                referrer_id INTEGER NOT NULL,
+                created_at_unix INTEGER NOT NULL
+            )
+            """
+        )
         await db.execute("PRAGMA foreign_keys = ON")
         for stmt in (
             "ALTER TABLE chat_state ADD COLUMN trigger_mode TEXT NOT NULL DEFAULT 'paid'",
@@ -407,3 +426,101 @@ async def is_chat_manager(chat_id: int, user_id: int, username: Optional[str]) -
                 await add_chat_manager(chat_id, user_id=user_id, username=uname)
                 return True
     return False
+
+
+async def get_user_ai_limits(user_id: int) -> tuple[int, int, int]:
+    """Возвращает (questions_used, daily_limit, extra_limit).
+    Автоматически сбрасывает счетчик, если настал новый день.
+    """
+    import datetime
+    today = datetime.date.today().isoformat()
+    
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT questions_used, last_used_date, extra_limit FROM user_ai_limits WHERE user_id=?",
+            (user_id,)
+        )
+        row = await cur.fetchone()
+        await cur.close()
+        
+        if not row:
+            # Создаем новую запись
+            await db.execute(
+                "INSERT INTO user_ai_limits (user_id, questions_used, last_used_date, extra_limit) VALUES (?, 0, ?, 0)",
+                (user_id, today)
+            )
+            await db.commit()
+            return 0, 10, 0
+            
+        used, last_date, extra = row
+        if last_date != today:
+            # Сброс на новый день
+            await db.execute(
+                "UPDATE user_ai_limits SET questions_used=0, last_used_date=? WHERE user_id=?",
+                (today, user_id)
+            )
+            await db.commit()
+            return 0, 10 + extra, extra
+            
+        return used, 10 + extra, extra
+
+
+async def increment_user_ai_questions(user_id: int) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE user_ai_limits SET questions_used = questions_used + 1 WHERE user_id=?",
+            (user_id,)
+        )
+        await db.commit()
+
+
+async def add_referral(referred_id: int, referrer_id: int) -> bool:
+    """Регистрирует реферала. Возвращает True, если реферал новый и успешно зарегистрирован."""
+    # Реферал не может пригласить сам себя
+    if referred_id == referrer_id:
+        return False
+        
+    now = int(time.time())
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Проверяем, не был ли этот пользователь уже приглашен кем-то или зарегистрирован ранее
+        cur = await db.execute("SELECT 1 FROM user_referrals WHERE referred_id=?", (referred_id,))
+        exists = await cur.fetchone()
+        await cur.close()
+        if exists:
+            return False
+            
+        # Записываем реферала
+        await db.execute(
+            "INSERT OR IGNORE INTO user_referrals (referred_id, referrer_id, created_at_unix) VALUES (?, ?, ?)",
+            (referred_id, referrer_id, now)
+        )
+        
+        # Обновляем лимит пригласившего
+        cur = await db.execute("SELECT extra_limit FROM user_ai_limits WHERE user_id=?", (referrer_id,))
+        row = await cur.fetchone()
+        await cur.close()
+        
+        if row is not None:
+            await db.execute(
+                "UPDATE user_ai_limits SET extra_limit = extra_limit + 5 WHERE user_id=?",
+                (referrer_id,)
+            )
+        else:
+            import datetime
+            today = datetime.date.today().isoformat()
+            await db.execute(
+                "INSERT INTO user_ai_limits (user_id, questions_used, last_used_date, extra_limit) VALUES (?, 0, ?, 5)",
+                (referrer_id, today)
+            )
+            
+        await db.commit()
+        return True
+
+
+async def get_referral_count(user_id: int) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT COUNT(*) FROM user_referrals WHERE referrer_id=?", (user_id,))
+        row = await cur.fetchone()
+        await cur.close()
+    return row[0] if row else 0
+

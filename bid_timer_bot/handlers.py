@@ -410,7 +410,7 @@ async def cmd_status_legacy(message: Message) -> None:
     await _status(message, "")
 
 
-@router.message(Command("timer_start", "start", "t", "go", "старт", ignore_case=True))
+@router.message(Command("timer_start", "t", "go", "старт", ignore_case=True))
 async def cmd_start_legacy(message: Message) -> None:
     _cleanup_command(message)
     parts = (message.text or "").split(maxsplit=1)
@@ -503,6 +503,35 @@ def _is_regex_bid(message: Message, state: db.ChatState) -> bool:
     return bool(rx.search(text))
 
 
+def parse_buttons_from_text(text: str) -> tuple[str, Optional[InlineKeyboardMarkup]]:
+    import re
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    lines = text.split("\n")
+    clean_lines = []
+    keyboard_rows = []
+    
+    pattern = re.compile(r"\[([^\]]+?)\s*\|\s*(https?://\S+?)\]")
+    
+    for line in lines:
+        matches = list(pattern.finditer(line))
+        if matches:
+            row = []
+            for m in matches:
+                btn_text = m.group(1).strip()
+                btn_url = m.group(2).strip()
+                row.append(InlineKeyboardButton(text=btn_text, url=btn_url))
+            keyboard_rows.append(row)
+            clean_line = pattern.sub("", line).strip()
+            if clean_line:
+                clean_lines.append(clean_line)
+        else:
+            clean_lines.append(line)
+            
+    clean_text = "\n".join(clean_lines).strip()
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard_rows) if keyboard_rows else None
+    return clean_text, reply_markup
+
+
 @router.message(Command("broadcast", "рассылка", ignore_case=True))
 async def cmd_broadcast(message: Message) -> None:
     user = message.from_user
@@ -515,15 +544,17 @@ async def cmd_broadcast(message: Message) -> None:
 
     parts = (message.text or "").split(maxsplit=1)
     broadcast_text = parts[1].strip() if len(parts) > 1 else ""
-    source_message = message.reply_to_message if not broadcast_text else None
+    source_message = message.reply_to_message
 
     if not broadcast_text and not source_message:
         await message.reply(
             "Использование:\n"
-            "<code>/рассылка текст</code>\n\n"
-            "Или ответьте командой <code>/рассылка</code> на сообщение, которое нужно разослать."
+            "<code>/рассылка текст [Кнопка | https://ссылка]</code>\n\n"
+            "Или ответьте командой <code>/рассылка [Кнопка | https://ссылка]</code> на сообщение, которое нужно разослать."
         )
         return
+
+    clean_text, reply_markup = parse_buttons_from_text(broadcast_text)
 
     targets = await db.list_broadcast_targets()
     if not targets:
@@ -538,7 +569,7 @@ async def cmd_broadcast(message: Message) -> None:
 
     success_count = 0
     fail_count = 0
-    chunks = _broadcast_chunks(broadcast_text) if broadcast_text else []
+    chunks = _broadcast_chunks(clean_text) if clean_text else []
 
     for target in targets:
         try:
@@ -547,6 +578,7 @@ async def cmd_broadcast(message: Message) -> None:
                     chat_id=target.target_id,
                     from_chat_id=message.chat.id,
                     message_id=source_message.message_id,
+                    reply_markup=reply_markup,
                 )
             else:
                 for chunk in chunks:
@@ -555,6 +587,7 @@ async def cmd_broadcast(message: Message) -> None:
                         html.escape(chunk),
                         parse_mode="HTML",
                         disable_web_page_preview=True,
+                        reply_markup=reply_markup,
                     )
             success_count += 1
         except Exception as e:
@@ -567,6 +600,222 @@ async def cmd_broadcast(message: Message) -> None:
         f"▸ Успешно доставлено: <b>{success_count}</b>\n"
         f"▸ Ошибок отправки: <b>{fail_count}</b>"
     )
+
+
+# ── ИИ И РЕФЕРАЛЫ ───────────────────────────────────────────────────────────
+
+active_ai_chats = set()
+
+
+def _mention(user) -> str:
+    name = html.escape(user.full_name or "Игрок")
+    return f'<a href="tg://user?id={user.id}">{name}</a>'
+
+
+@router.message(Command("start", ignore_case=True))
+async def cmd_start(message: Message) -> None:
+    if getattr(message.chat, "type", None) != "private":
+        # В группах перенаправляем на запуск таймера
+        parts = (message.text or "").split(maxsplit=1)
+        await _start(message, parts[1] if len(parts) > 1 else "")
+        return
+        
+    user_id = message.from_user.id
+    parts = (message.text or "").split()
+    
+    # Регистрация пользователя в БД
+    await db.remember_user(
+        user_id,
+        username=message.from_user.username,
+        full_name=message.from_user.full_name,
+        is_bot=message.from_user.is_bot
+    )
+    
+    referrer_id_str = None
+    if len(parts) > 1:
+        param = parts[1]
+        if param.startswith("ref_"):
+            referrer_id_str = param.split("_")[1]
+        elif param == "ai":
+            await cmd_ai(message)
+            return
+
+    invited_msg = ""
+    if referrer_id_str and referrer_id_str.isdigit():
+        referrer_id = int(referrer_id_str)
+        # Регистрируем реферала
+        success = await db.add_referral(user_id, referrer_id)
+        if success:
+            invited_msg = "\n\n🎉 Вы успешно зарегистрировались по приглашению другого пользователя! Ему начислено +5 квоты на вопросы ИИ."
+            try:
+                # Уведомляем пригласившего
+                _, limit, _ = await db.get_user_ai_limits(referrer_id)
+                await message.bot.send_message(
+                    referrer_id,
+                    f"🎉 <b>У вас новый реферал!</b>\n\n"
+                    f"Пользователь {_mention(message.from_user)} присоединился по вашей ссылке.\n"
+                    f"Ваш новый суточный лимит ИИ-вопросов: <b>{limit}</b> вопр."
+                )
+            except Exception:
+                pass
+
+    welcome_text = (
+        f"👋 <b>Приветствуем в BidTimerBot!</b>\n\n"
+        f"Я умею вести таймеры ставок за Telegram Stars в группах, "
+        f"а также развлекать пользователей отличными mini-играми.\n\n"
+        f"🤖 Чтобы пообщаться со встроенным ИИ Gemini, отправьте команду /ai.{invited_msg}"
+    )
+    await message.answer(welcome_text)
+
+
+@router.message(Command("ai", "ии", ignore_case=True))
+async def cmd_ai(message: Message) -> None:
+    if getattr(message.chat, "type", None) != "private":
+        await message.reply("Общение с ИИ доступно только в личных сообщениях с ботом.")
+        return
+        
+    user_id = message.from_user.id
+    used, limit, extra = await db.get_user_ai_limits(user_id)
+    ref_count = await db.get_referral_count(user_id)
+    
+    bot_info = await message.bot.get_me()
+    ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
+    
+    stats_text = (
+        f"🤖 <b>Интеллектуальный Ассистент Gemini</b>\n\n"
+        f"Здесь вы можете общаться с искусственным интеллектом!\n\n"
+        f"📊 <b>Ваша суточная квота вопросов:</b>\n"
+        f"▸ Доступно сегодня: <b>{max(0, limit - used)}</b> из <b>{limit}</b>\n"
+        f"▸ Использовано сегодня: <b>{used}</b>\n"
+        f"▸ Приглашено друзей: <b>{ref_count}</b> (+{extra} к лимиту)\n\n"
+        f"🔗 <b>Ваша реферальная ссылка:</b>\n"
+        f"<code>{ref_link}</code>\n"
+        f"<i>Отправьте ссылку другу. За каждого нового пользователя вы будете получать +5 вопросов к лимиту каждый день!</i>"
+    )
+    
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💬 Начать диалог", callback_data="ai_start_chat")],
+        [InlineKeyboardButton(text="◀️ В меню", callback_data="games_back")]
+    ])
+    await message.answer(stats_text, reply_markup=kb)
+
+
+from aiogram.types import CallbackQuery
+@router.callback_query(F.data == "ai_start_chat")
+async def cb_ai_start_chat(cb: CallbackQuery) -> None:
+    await cb.answer()
+    user_id = cb.from_user.id
+    active_ai_chats.add(user_id)
+    
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="◀️ Выйти из чата", callback_data="ai_exit_chat")]
+    ])
+    
+    await cb.message.edit_text(
+        "🤖 <b>Диалог с ИИ запущен!</b>\n\n"
+        "Отправьте мне любое текстовое сообщение, и я отвечу.\n\n"
+        "<i>Для выхода нажмите кнопку ниже.</i>",
+        reply_markup=kb
+    )
+
+
+@router.callback_query(F.data == "ai_exit_chat")
+async def cb_ai_exit_chat(cb: CallbackQuery) -> None:
+    await cb.answer()
+    user_id = cb.from_user.id
+    active_ai_chats.discard(user_id)
+    
+    used, limit, extra = await db.get_user_ai_limits(user_id)
+    ref_count = await db.get_referral_count(user_id)
+    bot_info = await cb.bot.get_me()
+    ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
+    
+    stats_text = (
+        f"🤖 <b>Интеллектуальный Ассистент Gemini</b>\n\n"
+        f"Здесь вы можете общаться с искусственным интеллектом!\n\n"
+        f"📊 <b>Ваша суточная квота вопросов:</b>\n"
+        f"▸ Доступно сегодня: <b>{max(0, limit - used)}</b> из <b>{limit}</b>\n"
+        f"▸ Использовано сегодня: <b>{used}</b>\n"
+        f"▸ Приглашено друзей: <b>{ref_count}</b> (+{extra} к лимиту)\n\n"
+        f"🔗 <b>Ваша реферальная ссылка:</b>\n"
+        f"<code>{ref_link}</code>\n"
+        f"<i>Отправьте ссылку другу. За каждого нового пользователя вы будете получать +5 вопросов к лимиту каждый день!</i>"
+    )
+    
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💬 Начать диалог", callback_data="ai_start_chat")],
+        [InlineKeyboardButton(text="◀️ В меню", callback_data="games_back")]
+    ])
+    await cb.message.edit_text(stats_text, reply_markup=kb)
+
+
+@router.message(F.text, F.chat.type == "private")
+async def on_private_text_message(message: Message) -> None:
+    user_id = message.from_user.id
+    if user_id not in active_ai_chats:
+        return
+
+    # Игнорируем команды
+    if message.text.startswith("/"):
+        active_ai_chats.discard(user_id)
+        return
+
+    # Проверяем лимит
+    used, limit, extra = await db.get_user_ai_limits(user_id)
+    if used >= limit:
+        await message.reply(
+            "⚠️ <b>Превышен суточный лимит вопросов к ИИ!</b>\n\n"
+            f"Вы использовали все свои <b>{limit}</b> вопросов на сегодня. Лимит обновится завтра.\n\n"
+            "🔗 Пригласите друзей по вашей ссылке, чтобы получить +5 вопросов к лимиту каждый день:\n"
+            f"<code>https://t.me/{(await message.bot.get_me()).username}?start=ref_{user_id}</code>"
+        )
+        return
+
+    from config import GEMINI_API_KEY
+    if not GEMINI_API_KEY:
+        await message.reply(
+            "⚠️ <b>Ошибка:</b> API-ключ Gemini не настроен.\n"
+            "Пожалуйста, добавьте <code>GEMINI_API_KEY</code> в переменные окружения на хостинге (например, Railway)."
+        )
+        return
+
+    await message.bot.send_chat_action(message.chat.id, "typing")
+
+    import aiohttp
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    payload = {
+        "contents": [{"parts": [{"text": message.text}]}]
+    }
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, timeout=30) as resp:
+                if resp.status == 200:
+                    res = await resp.json()
+                    try:
+                        reply_text = res["candidates"][0]["content"]["parts"][0]["text"]
+                        await db.increment_user_ai_questions(user_id)
+                        
+                        try:
+                            await message.reply(reply_text, parse_mode="Markdown")
+                        except Exception:
+                            try:
+                                await message.reply(reply_text)
+                            except Exception:
+                                pass
+                    except (KeyError, IndexError):
+                        log.error("Invalid Gemini response format: %s", res)
+                        await message.reply("❌ Произошла ошибка при обработке ответа ИИ.")
+                else:
+                    err_body = await resp.text()
+                    log.error("Gemini API error status=%s response=%s", resp.status, err_body)
+                    await message.reply("❌ Ошибка при запросе к ИИ. Попробуйте позже.")
+    except Exception as e:
+        log.exception("Gemini API connection error")
+        await message.reply(f"❌ Ошибка подключения к ИИ: {e}")
 
 
 @router.message()
