@@ -961,7 +961,7 @@ async def on_private_text_message(message: Message) -> None:
     await message.bot.send_chat_action(message.chat.id, "typing")
 
     import aiohttp
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
     payload = {
         "contents": [{"parts": [{"text": message.text}]}]
     }
