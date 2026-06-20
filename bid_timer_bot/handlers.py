@@ -669,16 +669,13 @@ async def _send_main_menu(message_or_cb, user, invited_msg=""):
     if isinstance(message_or_cb, CallbackQuery):
         cb = message_or_cb
         try:
-            if cb.message.photo:
-                await cb.message.edit_caption(caption=text, reply_markup=kb)
-            else:
-                await cb.message.edit_text(text, reply_markup=kb)
+            await cb.message.delete()
         except Exception:
-            try:
-                await cb.message.answer_photo(banner, caption=text, reply_markup=kb)
-                await cb.message.delete()
-            except Exception:
-                await cb.message.answer(text, reply_markup=kb)
+            pass
+        try:
+            await cb.message.answer_photo(banner, caption=text, reply_markup=kb)
+        except Exception:
+            await cb.message.answer(text, reply_markup=kb)
     else:
         message = message_or_cb
         try:
@@ -698,6 +695,11 @@ async def cmd_menu(message: Message) -> None:
 @router.callback_query(F.data == "main_menu")
 async def cb_main_menu(cb: CallbackQuery) -> None:
     await cb.answer()
+    try:
+        from games import _clear_user_game_sessions
+        _clear_user_game_sessions(cb.message.chat.id, cb.from_user.id)
+    except Exception:
+        pass
     await _send_main_menu(cb, cb.from_user)
 
 

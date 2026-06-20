@@ -116,15 +116,14 @@ def _kb(buttons: list[list[InlineKeyboardButton]]) -> InlineKeyboardMarkup:
 
 async def _edit(cb: CallbackQuery, text: str, reply_markup: Optional[InlineKeyboardMarkup] = None) -> Message:
     try:
-        if cb.message.photo:
-            return await cb.message.edit_caption(caption=text, reply_markup=reply_markup)
-        else:
-            return await cb.message.edit_text(text, reply_markup=reply_markup)
+        await cb.message.delete()
     except Exception:
-        try:
-            return await cb.message.answer(text, reply_markup=reply_markup)
-        except Exception:
-            return await cb.bot.send_message(cb.message.chat.id, text, reply_markup=reply_markup)
+        pass
+    try:
+        return await cb.message.answer(text, reply_markup=reply_markup)
+    except Exception:
+        return await cb.bot.send_message(cb.message.chat.id, text, reply_markup=reply_markup)
+
 
 
 # ──────────────────────────────────────────────
@@ -231,23 +230,34 @@ async def cmd_games_help(message: Message) -> None:
     await message.answer(card("❓ Помощь по играм", help_body))
 
 
+def _clear_user_game_sessions(chat_id: int, user_id: int) -> None:
+    key = _key(chat_id, user_id)
+    _pop("wordle", key)
+    _pop("gnum", key)
+    _pop("gnum_mp", (chat_id,))
+
+
 @router.callback_query(F.data.in_({"games_back", "open_games_menu"}))
 async def callback_games_back(cb: CallbackQuery) -> None:
     await cb.answer()
+    
+    uid = cb.from_user.id
+    chat_id = cb.message.chat.id
+    _clear_user_game_sessions(chat_id, uid)
+    
+    try:
+        await cb.message.delete()
+    except Exception:
+        pass
+        
     text = card("🎮 Mini-игры", "Выберите игру:")
     markup = _games_keyboard()
     try:
-        if cb.message.photo:
-            await cb.message.edit_caption(caption=text, reply_markup=markup)
-        else:
-            await cb.message.edit_text(text, reply_markup=markup)
+        banner = FSInputFile("assets/games_banner.png")
+        await cb.message.answer_photo(banner, caption=text, reply_markup=markup)
     except Exception:
-        try:
-            banner = FSInputFile("assets/games_banner.png")
-            await cb.message.answer_photo(banner, caption=text, reply_markup=markup)
-            await cb.message.delete()
-        except Exception:
-            await cb.message.answer(text, reply_markup=markup)
+        await cb.message.answer(text, reply_markup=markup)
+
 
 
 # ──────────────────────────────────────────────
@@ -1205,7 +1215,30 @@ async def _game_gnum_start_mp(cb: CallbackQuery, sess: dict) -> None:
     await cb.answer("Игра начинается!")
 
 
-@router.message(F.text.regexp(r"^\d{1,3}$"))
+def _has_active_gnum(message: Message) -> bool:
+    if not message.text or not message.from_user:
+        return False
+    text = message.text.strip()
+    if not text.isdigit() or len(text) > 3 or text.startswith("/"):
+        return False
+    
+    key = _key(message.chat.id, message.from_user.id)
+    sess_sp = _get("gnum", key)
+    if sess_sp:
+        return True
+        
+    chat_key = (message.chat.id,)
+    sess_mp = _get("gnum_mp", chat_key)
+    if sess_mp:
+        players = sess_mp.get("players", [])
+        turn_i = sess_mp.get("turn_i", 0)
+        if 0 <= turn_i < len(players):
+            if players[turn_i].id == message.from_user.id:
+                return True
+    return False
+
+
+@router.message(_has_active_gnum)
 async def game_gnum_guess(message: Message) -> None:
     chat_id = message.chat.id
     uid = message.from_user.id

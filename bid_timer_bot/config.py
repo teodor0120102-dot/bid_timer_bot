@@ -11,4 +11,4 @@ DEFAULT_TRIGGER_REGEX = os.getenv("BIDTIMER_DEFAULT_TRIGGER_REGEX", r"переб
 
 DB_PATH = os.getenv("BIDTIMER_DB_PATH", "bid_timer.db")
 PAID_STARS_CACHE_TTL = int(os.getenv("BIDTIMER_PAID_CACHE_TTL", "30"))
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AQ.Ab8RN6KsX9vgvtOyrWiKrmqAEassyHwqOddP6FCzYp_D8KYoYg")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AQ.Ab8RN6KrX-brzMnHcSm4plINsrRuf6rWe4zt2hANXwRhwzJ6VA")
