@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import sys
 import unittest
 from types import SimpleNamespace
@@ -55,48 +54,18 @@ class PaidStarValueTests(unittest.TestCase):
         self.assertIsNone(bid._paid_star_value(m))
 
 
-class UserBidMessageTests(unittest.TestCase):
-    def test_text_message_ok(self):
-        self.assertTrue(bid._is_user_bid_message(_msg(text="привет")))
+class PaidBidTests(unittest.TestCase):
+    def test_api_field_counts_as_bid(self):
+        m = _msg(paid_star_count=1, text="ставка")
+        self.assertTrue(bid._is_paid_bid(m))
 
-    def test_command_rejected(self):
-        self.assertFalse(bid._is_user_bid_message(_msg(text="/bid status")))
-
-    def test_bot_rejected(self):
-        self.assertFalse(
-            bid._is_user_bid_message(
-                _msg(from_user=SimpleNamespace(id=1, is_bot=True, username="bot"))
-            )
-        )
-
-    def test_service_message_rejected(self):
-        self.assertFalse(bid._is_user_bid_message(_msg(left_chat_member=[1])))
-
-    def test_price_change_rejected(self):
-        self.assertFalse(
-            bid._is_user_bid_message(_msg(paid_message_price_changed=SimpleNamespace()))
-        )
-
-
-class PaidBidAsyncTests(unittest.IsolatedAsyncioTestCase):
-    async def test_api_field_counts_as_bid(self):
-        m = _msg(paid_star_count=1, text="хуй")
-        self.assertTrue(await bid._is_paid_bid(m))
-
-    async def test_heuristic_when_stars_gated(self):
+    def test_no_heuristic_without_paid_field(self):
         m = _msg(text="перебил")
-        with patch.object(stars, "fetch_paid_stars", AsyncMock(return_value=1)):
-            self.assertTrue(await bid._is_paid_bid(m))
+        self.assertFalse(bid._is_paid_bid(m))
 
-    async def test_no_bid_without_stars_and_no_field(self):
+    def test_no_bid_without_stars_and_no_field(self):
         m = _msg(text="обычное")
-        with patch.object(stars, "fetch_paid_stars", AsyncMock(return_value=None)):
-            self.assertFalse(await bid._is_paid_bid(m))
-
-    async def test_no_bid_when_stars_disabled(self):
-        m = _msg(text="обычное")
-        with patch.object(stars, "fetch_paid_stars", AsyncMock(return_value=0)):
-            self.assertFalse(await bid._is_paid_bid(m))
+        self.assertFalse(bid._is_paid_bid(m))
 
 
 class RegexBidTests(unittest.TestCase):
@@ -109,6 +78,18 @@ class RegexBidTests(unittest.TestCase):
         state = SimpleNamespace(trigger_regex=r"перебил")
         m = _msg(text="просто текст")
         self.assertFalse(bid._is_regex_bid(m, state))
+
+
+class BidderExemptTests(unittest.IsolatedAsyncioTestCase):
+    async def test_staff_exempt(self):
+        m = _msg()
+        with patch("bid.permissions.is_chat_staff", AsyncMock(return_value=True)):
+            self.assertTrue(await bid._bidder_exempt(m, m.from_user))
+
+    async def test_regular_user_not_exempt(self):
+        m = _msg()
+        with patch("bid.permissions.is_chat_staff", AsyncMock(return_value=False)):
+            self.assertFalse(await bid._bidder_exempt(m, m.from_user))
 
 
 class StarsHelperTests(unittest.TestCase):
@@ -139,11 +120,20 @@ class SchedulerSmokeTests(unittest.IsolatedAsyncioTestCase):
             status_message_id=1,
             last_bid_user_id=None,
             last_bid_username=None,
+            last_bid_message_id=None,
         ))):
             await sched.arm_timer(bot, chat_id)
 
         self.assertTrue(sched.timers.is_active(chat_id))
         sched.timers.cancel(chat_id)
+
+    def test_tick_intervals(self):
+        import scheduler as sched
+
+        self.assertEqual(sched._tick_interval(5), 1)
+        self.assertEqual(sched._tick_interval(20), 2)
+        self.assertEqual(sched._tick_interval(90), 5)
+        self.assertEqual(sched._tick_interval(200), 10)
 
 
 if __name__ == "__main__":

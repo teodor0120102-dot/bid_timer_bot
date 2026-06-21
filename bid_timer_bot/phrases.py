@@ -98,7 +98,8 @@ def timer_start(remaining_sec: int, total_sec: int, leader: Optional[str] = None
     return card(
         "⏱ Раунд начался",
         f"<code>{bar}</code>  <b>{time_str}</b>{leader_line}\n\n"
-        "Каждое сообщение за ⭐ сбрасывает таймер.\n"
+        "Каждое платное сообщение за ⭐ сбрасывает таймер.\n"
+        "Перебить может только другой участник.\n"
         "Побеждает последний перебивший.",
     )
 
@@ -133,6 +134,16 @@ def timer_countdown(seconds: int, total_sec: int, leader: Optional[str] = None) 
 
 def timer_finished() -> str:
     return card("🏁 Время вышло", "Подводим итоги…")
+
+
+def bid_leader_tick(leader: str, remaining_sec: int, total_sec: int) -> str:
+    bar = progress_bar(remaining_sec, total_sec)
+    time_str = format_time(remaining_sec)
+    return card(
+        "💫 Перебив",
+        f"👑 Лидирует: {leader}\n\n"
+        f"<code>{bar}</code>  <b>{time_str}</b>",
+    )
 
 
 def bid_reset(

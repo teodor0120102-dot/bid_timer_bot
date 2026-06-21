@@ -16,6 +16,11 @@ _admin_cache: Dict[Tuple[int, int], Tuple[bool, int]] = {}
 _CACHE_TTL = 120
 
 
+async def is_chat_staff(bot, chat_id: int, user_id: int) -> bool:
+    """Владелец или администратор Telegram-группы."""
+    return await _is_chat_staff(bot, chat_id, user_id)
+
+
 async def _is_chat_staff(bot, chat_id: int, user_id: int) -> bool:
     """Владелец или администратор группы — доступ автоматически."""
     # В ЛС пользователь всегда хозяин

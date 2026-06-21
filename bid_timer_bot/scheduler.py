@@ -56,7 +56,7 @@ def _status_text(remaining: int, total: int, state: db.ChatState) -> str:
     return phrases.timer_tick(remaining, total, leader)
 
 
-async def _edit_status(bot: Bot, chat_id: int, message_id: int, text: str) -> None:
+async def _edit_message(bot: Bot, chat_id: int, message_id: int, text: str) -> None:
     try:
         await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id)
     except TelegramBadRequest as e:
@@ -65,22 +65,49 @@ async def _edit_status(bot: Bot, chat_id: int, message_id: int, text: str) -> No
             return
         if "message to edit not found" in err_msg or "message is not found" in err_msg or "chat not found" in err_msg:
             try:
-                # Recreate message
                 msg = await bot.send_message(chat_id, text, disable_web_page_preview=True)
                 await db.update_chat_state(chat_id, status_message_id=msg.message_id)
             except Exception:
                 log.debug("Failed to send replacement status message chat=%s", chat_id, exc_info=True)
         else:
-            log.debug("Status edit skipped chat=%s: %s", chat_id, e)
+            log.debug("Message edit skipped chat=%s: %s", chat_id, e)
     except Exception:
-        log.debug("Status edit failed chat=%s", chat_id, exc_info=True)
+        log.debug("Message edit failed chat=%s", chat_id, exc_info=True)
+
+
+async def _edit_status(bot: Bot, chat_id: int, message_id: int, text: str) -> None:
+    await _edit_message(bot, chat_id, message_id, text)
+
+
+async def _refresh_bid_panel(
+    bot: Bot,
+    chat_id: int,
+    state: db.ChatState,
+    remaining: int,
+    total_sec: int,
+) -> None:
+    if not state.last_bid_message_id or not state.last_bid_user_id:
+        return
+    leader = _winner_label(state)
+    text = phrases.bid_leader_tick(leader, remaining, total_sec)
+    try:
+        await bot.edit_message_text(
+            text,
+            chat_id=chat_id,
+            message_id=state.last_bid_message_id,
+            disable_web_page_preview=True,
+        )
+    except TelegramBadRequest as e:
+        if "message is not modified" not in str(e).lower():
+            log.debug("Bid panel tick skipped chat=%s: %s", chat_id, e)
+    except Exception:
+        log.debug("Bid panel tick failed chat=%s", chat_id, exc_info=True)
 
 
 async def _send_or_refresh_status(bot: Bot, chat_id: int, text: str) -> int:
     state = await db.get_chat_state(chat_id)
     if state.status_message_id:
         await _edit_status(bot, chat_id, state.status_message_id, text)
-        # Re-fetch state in case it was recreated and ID changed
         updated_state = await db.get_chat_state(chat_id)
         return updated_state.status_message_id or state.status_message_id
     msg = await bot.send_message(chat_id, text, disable_web_page_preview=True)
@@ -88,22 +115,12 @@ async def _send_or_refresh_status(bot: Bot, chat_id: int, text: str) -> int:
     return msg.message_id
 
 
-async def _delete_bid_panel(bot: Bot, chat_id: int, state: db.ChatState) -> None:
-    if not state.last_bid_message_id:
-        return
-    try:
-        await bot.delete_message(chat_id, state.last_bid_message_id)
-    except Exception:
-        pass
-
-
 async def _finish_round(bot: Bot, chat_id: int, state: db.ChatState) -> None:
-    await _delete_bid_panel(bot, chat_id, state)
     final_text = _winner_message(state)
     await db.update_chat_state(
         chat_id,
         is_running=False,
-        clear_last_bid_message=True,
+        clear_last_bid_message=False,
     )
     if state.status_message_id:
         await _edit_status(bot, chat_id, state.status_message_id, final_text)
@@ -122,6 +139,7 @@ async def update_status_now(bot: Bot, chat_id: int, end_at_unix: int, total_sec:
         state.status_message_id,
         _status_text(remaining, total_sec, state),
     )
+    await _refresh_bid_panel(bot, chat_id, state, remaining, total_sec)
 
 
 async def arm_timer(bot: Bot, chat_id: int) -> None:
@@ -133,13 +151,12 @@ async def arm_timer(bot: Bot, chat_id: int) -> None:
 
 async def start_new_round(bot: Bot, chat_id: int, duration_seconds: int) -> int:
     end_at = int(time.time()) + int(duration_seconds)
-    old_state = await db.get_chat_state(chat_id)
-    await _delete_bid_panel(bot, chat_id, old_state)
     await db.update_chat_state(
         chat_id,
         is_running=True,
         end_at_unix=end_at,
         clear_last_bid=True,
+        clear_last_bid_message=True,
     )
     await _send_or_refresh_status(
         bot,
@@ -190,31 +207,44 @@ def _winner_message(state: db.ChatState) -> str:
     return phrases.winner_no_bid()
 
 
+def _tick_interval(remaining: int) -> int:
+    if remaining <= 10:
+        return 1
+    if remaining <= 30:
+        return 2
+    if remaining <= 120:
+        return 5
+    return 10
+
+
 async def run_timer(bot: Bot, chat_id: int, end_at_unix: int, total_sec: int) -> None:
     try:
         last_tick = 0
         while True:
             now = int(time.time())
-            remaining = end_at_unix - now
+            state = await db.get_chat_state(chat_id)
+            if not state.is_running or not state.end_at_unix:
+                return
+            if state.end_at_unix != end_at_unix:
+                return
+
+            remaining = max(0, int(state.end_at_unix) - now)
             if remaining <= 0:
                 break
 
-            state = await db.get_chat_state(chat_id)
-            if not state.is_running or state.end_at_unix != end_at_unix:
-                return
-
-            if state.status_message_id:
-                interval = 1 if remaining <= 10 else (2 if remaining <= 30 else 8)
-                if now - last_tick >= interval:
+            interval = _tick_interval(remaining)
+            if now - last_tick >= interval:
+                if state.status_message_id:
                     await _edit_status(
                         bot,
                         chat_id,
                         state.status_message_id,
                         _status_text(remaining, total_sec, state),
                     )
-                    last_tick = now
+                await _refresh_bid_panel(bot, chat_id, state, remaining, total_sec)
+                last_tick = now
 
-            await asyncio.sleep(0.4 if remaining <= 10 else min(remaining, 2))
+            await asyncio.sleep(1 if remaining <= 10 else min(2, remaining))
 
         async with chat_locks[chat_id]:
             state = await db.get_chat_state(chat_id)
