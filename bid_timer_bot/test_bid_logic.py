@@ -8,9 +8,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-
-# handlers тянет aiogram — на CI/хостинге он есть; локально тесты тоже должны пройти.
-import handlers
+import bid
 import stars
 
 
@@ -42,75 +40,75 @@ def _msg(**kwargs):
 class PaidStarValueTests(unittest.TestCase):
     def test_reads_paid_star_count(self):
         m = _msg(paid_star_count=1)
-        self.assertEqual(handlers._paid_star_value(m), 1)
+        self.assertEqual(bid._paid_star_value(m), 1)
 
     def test_reads_paid_message_star_count(self):
         m = _msg(paid_message_star_count=3)
-        self.assertEqual(handlers._paid_star_value(m), 3)
+        self.assertEqual(bid._paid_star_value(m), 3)
 
     def test_reads_model_extra(self):
         m = _msg(model_extra={"paid_star_count": 2})
-        self.assertEqual(handlers._paid_star_value(m), 2)
+        self.assertEqual(bid._paid_star_value(m), 2)
 
     def test_zero_is_not_paid(self):
         m = _msg(paid_star_count=0)
-        self.assertIsNone(handlers._paid_star_value(m))
+        self.assertIsNone(bid._paid_star_value(m))
 
 
 class UserBidMessageTests(unittest.TestCase):
     def test_text_message_ok(self):
-        self.assertTrue(handlers._is_user_bid_message(_msg(text="привет")))
+        self.assertTrue(bid._is_user_bid_message(_msg(text="привет")))
 
     def test_command_rejected(self):
-        self.assertFalse(handlers._is_user_bid_message(_msg(text="/bid status")))
+        self.assertFalse(bid._is_user_bid_message(_msg(text="/bid status")))
 
     def test_bot_rejected(self):
         self.assertFalse(
-            handlers._is_user_bid_message(
+            bid._is_user_bid_message(
                 _msg(from_user=SimpleNamespace(id=1, is_bot=True, username="bot"))
             )
         )
 
     def test_service_message_rejected(self):
-        self.assertFalse(handlers._is_user_bid_message(_msg(left_chat_member=[1])))
+        self.assertFalse(bid._is_user_bid_message(_msg(left_chat_member=[1])))
 
     def test_price_change_rejected(self):
         self.assertFalse(
-            handlers._is_user_bid_message(_msg(paid_message_price_changed=SimpleNamespace()))
+            bid._is_user_bid_message(_msg(paid_message_price_changed=SimpleNamespace()))
         )
 
 
 class PaidBidAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_api_field_counts_as_bid(self):
         m = _msg(paid_star_count=1, text="хуй")
-        self.assertTrue(await handlers._is_paid_bid(m))
+        self.assertTrue(await bid._is_paid_bid(m))
 
     async def test_heuristic_when_stars_gated(self):
         m = _msg(text="перебил")
         with patch.object(stars, "fetch_paid_stars", AsyncMock(return_value=1)):
-            self.assertTrue(await handlers._is_paid_bid(m))
+            self.assertTrue(await bid._is_paid_bid(m))
 
     async def test_no_bid_without_stars_and_no_field(self):
         m = _msg(text="обычное")
         with patch.object(stars, "fetch_paid_stars", AsyncMock(return_value=None)):
-            self.assertFalse(await handlers._is_paid_bid(m))
+            self.assertFalse(await bid._is_paid_bid(m))
 
     async def test_no_bid_when_stars_disabled(self):
         m = _msg(text="обычное")
         with patch.object(stars, "fetch_paid_stars", AsyncMock(return_value=0)):
-            self.assertFalse(await handlers._is_paid_bid(m))
+            self.assertFalse(await bid._is_paid_bid(m))
 
 
 class RegexBidTests(unittest.TestCase):
     def test_regex_match(self):
         state = SimpleNamespace(trigger_regex=r"перебил")
         m = _msg(text="я перебил!")
-        self.assertTrue(handlers._is_regex_bid(m, state))
+        self.assertTrue(bid._is_regex_bid(m, state))
 
     def test_regex_no_match(self):
         state = SimpleNamespace(trigger_regex=r"перебил")
         m = _msg(text="просто текст")
-        self.assertFalse(handlers._is_regex_bid(m, state))
+        self.assertFalse(bid._is_regex_bid(m, state))
 
 
 class StarsHelperTests(unittest.TestCase):

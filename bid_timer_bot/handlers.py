@@ -238,6 +238,16 @@ async def _start(message: Message, arg: str) -> None:
         return
     if await _require_stars(message) is None:
         return
+    sees, warn = await visibility.group_sees_messages(message.bot, message.chat.id)
+    if not sees:
+        await _answer_temp(
+            message,
+            phrases.card(
+                "Не могу запустить раунд",
+                warn or "Бот не видит сообщения в этой группе.",
+            ),
+        )
+        return
     state = await db.get_chat_state(message.chat.id)
     seconds = state.duration_seconds
     if arg.strip().isdigit():
@@ -512,123 +522,7 @@ async def cmd_managers_legacy(message: Message) -> None:
     await _managers(message, "")
 
 
-# ── ОПРЕДЕЛЕНИЕ СТАВКИ ──────────────────────────────────────────────────────
-
-_SERVICE_MESSAGE_FIELDS = (
-    "new_chat_members",
-    "left_chat_member",
-    "new_chat_title",
-    "new_chat_photo",
-    "delete_chat_photo",
-    "group_chat_created",
-    "supergroup_chat_created",
-    "channel_chat_created",
-    "migrate_to_chat_id",
-    "migrate_from_chat_id",
-    "pinned_message",
-    "forum_topic_created",
-    "forum_topic_closed",
-    "forum_topic_reopened",
-    "general_forum_topic_hidden",
-    "general_forum_topic_unhidden",
-    "video_chat_scheduled",
-    "video_chat_started",
-    "video_chat_ended",
-    "video_chat_participants_invited",
-    "message_auto_delete_timer_changed",
-)
-
-
-def _paid_star_value(message: Message) -> Optional[int]:
-    """Читаем количество Stars из всех известных полей Bot API / aiogram."""
-    for attr in ("paid_star_count", "paid_message_star_count"):
-        val = getattr(message, attr, None)
-        if val is not None and int(val) > 0:
-            return int(val)
-
-    extra = getattr(message, "model_extra", None) or {}
-    for key in ("paid_star_count", "paid_message_star_count"):
-        val = extra.get(key)
-        if val is not None and int(val) > 0:
-            return int(val)
-    return None
-
-
-def _is_user_bid_message(message: Message) -> bool:
-    """Обычное сообщение участника, а не сервисное/команда."""
-    if getattr(message, "paid_message_price_changed", None):
-        return False
-    user = message.from_user
-    if not user or user.is_bot:
-        return False
-    if message.sender_chat:
-        return False
-
-    for field in _SERVICE_MESSAGE_FIELDS:
-        if getattr(message, field, None):
-            return False
-
-    text = (message.text or message.caption or "").strip()
-    if text.startswith("/"):
-        return False
-
-    return bool(
-        text
-        or message.photo
-        or message.video
-        or message.animation
-        or message.sticker
-        or message.voice
-        or message.audio
-        or message.document
-    )
-
-
-async def _is_paid_bid(message: Message) -> bool:
-    """Платное сообщение за Stars — по полю API или по режиму чата."""
-    paid_stars = _paid_star_value(message)
-    if paid_stars:
-        log.info(
-            "PAID BID: chat=%s user=%s stars=%s text=%r",
-            message.chat.id,
-            message.from_user.id if message.from_user else "?",
-            paid_stars,
-            (message.text or "")[:50],
-        )
-        return True
-
-    if getattr(message, "successful_payment", None) is not None:
-        log.info("PAID BID via successful_payment: chat=%s", message.chat.id)
-        return True
-
-    # Fallback: если в группе включены «Сообщения за Stars», обычные сообщения
-    # участников уже оплачены — Telegram не пускает бесплатные.
-    if not _is_user_bid_message(message):
-        return False
-
-    chat_paid = await stars.fetch_paid_stars(message.bot, message.chat.id)
-    if stars.stars_enabled(chat_paid):
-        log.info(
-            "PAID BID (stars-gated chat): chat=%s user=%s price=%s text=%r",
-            message.chat.id,
-            message.from_user.id if message.from_user else "?",
-            chat_paid,
-            (message.text or "")[:50],
-        )
-        return True
-
-    return False
-
-
-def _is_regex_bid(message: Message, state: db.ChatState) -> bool:
-    text = (message.text or "").strip()
-    if not text:
-        return False
-    try:
-        rx = re.compile(state.trigger_regex, flags=re.IGNORECASE)
-    except re.error:
-        return False
-    return bool(rx.search(text))
+# Логика перебива — в bid.py, регистрируется напрямую на Dispatcher в bot.py
 
 
 def parse_buttons_from_text(text: str) -> tuple[str, Optional[InlineKeyboardMarkup]]:
@@ -1080,81 +974,3 @@ async def on_private_text_message(message: Message) -> None:
     except Exception as e:
         log.exception("Gemini API connection error")
         await message.reply(f"❌ Ошибка подключения к ИИ: {e}")
-
-
-@router.message()
-async def on_any_message(message: Message) -> None:
-    if getattr(message.chat, "type", None) not in ("group", "supergroup"):
-        return
-    if getattr(message, "paid_message_price_changed", None):
-        return
-
-    state = await db.get_chat_state(message.chat.id)
-    if not state.is_running:
-        return
-
-    if not scheduler.timers.is_active(message.chat.id):
-        await scheduler.arm_timer(message.bot, message.chat.id)
-
-    if await scheduler.finalize_if_expired(message.bot, message.chat.id):
-        return
-
-    user = message.from_user
-    if not user:
-        return
-
-    mode = state.trigger_mode
-    is_bid = False
-    is_potentially_paid = await _is_paid_bid(message)
-
-    if mode in ("paid", "both") and is_potentially_paid:
-        is_bid = True
-    if not is_bid and mode in ("regex", "both") and _is_regex_bid(message, state):
-        is_bid = True
-
-    if not is_bid:
-        return
-
-    async with scheduler.chat_locks[message.chat.id]:
-        state = await db.get_chat_state(message.chat.id)
-        if not state.is_running:
-            return
-        if state.end_at_unix and int(time.time()) >= int(state.end_at_unix):
-            return
-
-        mode = state.trigger_mode
-        is_potentially_paid = await _is_paid_bid(message)
-        is_bid = False
-        if mode in ("paid", "both") and is_potentially_paid:
-            is_bid = True
-        if not is_bid and mode in ("regex", "both") and _is_regex_bid(message, state):
-            is_bid = True
-        if not is_bid:
-            return
-
-        log.info(
-            "BID ACCEPTED: chat=%s user=%s (%s) mode=%s paid=%s",
-            message.chat.id, user.id, user.username or "?", mode, is_potentially_paid,
-        )
-
-        prev_mention = _state_bidder_mention(state)
-        end_at = await scheduler.reset_round_on_bid(
-            message.bot,
-            message.chat.id,
-            duration_seconds=state.duration_seconds,
-            bidder_user_id=user.id,
-            bidder_username=user.username,
-        )
-        remaining = max(0, end_at - int(time.time()))
-        bid_msg_id = await _edit_or_send_bid_panel(
-            message,
-            state,
-            phrases.bid_reset(
-                mention=_user_mention(user),
-                time_str=_format_remaining(end_at),
-                total_sec=state.duration_seconds,
-                remaining_sec=remaining,
-                prev_mention=prev_mention,
-            ),
-        )
-        await db.update_chat_state(message.chat.id, last_bid_message_id=bid_msg_id)

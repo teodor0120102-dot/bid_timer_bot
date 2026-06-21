@@ -6,15 +6,14 @@ import asyncio
 import logging
 from typing import Any, Awaitable, Callable
 
-from aiogram import BaseMiddleware, Bot, Dispatcher
+from aiogram import BaseMiddleware, Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import CallbackQuery, ChatMemberUpdated, Message, TelegramObject
+from aiogram.types import CallbackQuery, ChatMemberUpdated, Message, TelegramObject, Update
+from aiogram.types.update import UpdateTypeLookupError
 
-# Railway часто запускает файл как `python bot.py` в Root Directory.
-# В этом режиме относительные импорты (`from .x import y`) не работают,
-# поэтому используем обычные импорты по файлам в директории.
 from config import BOT_TOKEN
+import bid
 import database as db
 import handlers
 import games
@@ -27,6 +26,32 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
 )
 log = logging.getLogger("bidtimer")
+
+
+class UpdateLogMiddleware(BaseMiddleware):
+    """Логируем тип каждого апдейта — помогает понять «is not handled»."""
+
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        if isinstance(event, Update):
+            try:
+                log.info(
+                    "UPDATE id=%s type=%s chat=%s",
+                    event.update_id,
+                    event.event_type,
+                    getattr(getattr(event.event, "chat", None), "id", None),
+                )
+            except UpdateTypeLookupError:
+                log.warning(
+                    "UPDATE id=%s UNKNOWN TYPE — обновите aiogram! raw=%s",
+                    event.update_id,
+                    event.model_dump(exclude_none=True),
+                )
+        return await handler(event, data)
 
 
 class RecipientTrackerMiddleware(BaseMiddleware):
@@ -90,20 +115,24 @@ async def run_polling() -> None:
         token=BOT_TOKEN,
         default=DefaultBotProperties(parse_mode="HTML"),
     )
-    # На хостингах иногда остаётся webhook/зависшие апдейты — это ломает polling.
     await bot.delete_webhook(drop_pending_updates=True)
     dp = Dispatcher(storage=MemoryStorage())
+
+    dp.update.outer_middleware(UpdateLogMiddleware())
     tracker = RecipientTrackerMiddleware()
     dp.message.outer_middleware(tracker)
     dp.callback_query.outer_middleware(tracker)
     dp.my_chat_member.outer_middleware(tracker)
 
-    # Игры ПЕРЕД handlers — чтобы /games и callback'и игр обрабатывались первыми,
-    # и не перехватывались catch-all хэндлером on_any_message из handlers.
+    # Перебив — напрямую на Dispatcher, ДО игр и прочих роутеров.
+    dp.message.register(
+        bid.process_group_bid,
+        F.chat.type.in_({"group", "supergroup"}),
+    )
+
     dp.include_router(games.router)
     dp.include_router(handlers.router)
 
-    # При старте подтянем цену Stars и восстановим таймеры
     for state in await db.list_running_chats():
         paid = await stars.fetch_paid_stars(bot, state.chat_id, force=True)
         if stars.stars_enabled(paid):
@@ -123,7 +152,16 @@ async def run_polling() -> None:
             "Privacy mode ВКЛ: бот не видит обычные сообщения в группах. "
             "BotFather → /setprivacy → Disable, или сделайте бота админом."
         )
-    await dp.start_polling(bot)
+
+    await dp.start_polling(
+        bot,
+        allowed_updates=[
+            "message",
+            "edited_message",
+            "callback_query",
+            "my_chat_member",
+        ],
+    )
 
 
 if __name__ == "__main__":
