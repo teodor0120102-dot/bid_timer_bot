@@ -22,8 +22,14 @@ def stars_enabled(star_count: Optional[int]) -> bool:
 
 def _extract_paid_stars(chat) -> Optional[int]:
     """Пробуем все известные атрибуты для получения цены Stars."""
-    for attr in ("paid_message_star_count", "paid_star_count"):
+    for attr in ("paid_message_star_count", "paid_star_count", "send_paid_messages_stars"):
         val = getattr(chat, attr, None)
+        if val is not None:
+            return int(val)
+
+    extra = getattr(chat, "model_extra", None) or {}
+    for key in ("paid_message_star_count", "paid_star_count", "send_paid_messages_stars"):
+        val = extra.get(key)
         if val is not None:
             return int(val)
     return None

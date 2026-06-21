@@ -19,6 +19,7 @@ import database as db
 import handlers
 import games
 import stars
+import visibility
 from scheduler import arm_timer
 
 logging.basicConfig(
@@ -111,7 +112,17 @@ async def run_polling() -> None:
             await db.update_chat_state(state.chat_id, is_running=False, clear_last_bid=True)
 
     me = await bot.get_me()
-    log.info("🚀 BidTimerBot запущен: @%s", me.username)
+    sees_all = getattr(me, "can_read_all_group_messages", None)
+    log.info(
+        "🚀 BidTimerBot запущен: @%s | can_read_all_group_messages=%s",
+        me.username,
+        sees_all,
+    )
+    if sees_all is False:
+        log.warning(
+            "Privacy mode ВКЛ: бот не видит обычные сообщения в группах. "
+            "BotFather → /setprivacy → Disable, или сделайте бота админом."
+        )
     await dp.start_polling(bot)
 
 
