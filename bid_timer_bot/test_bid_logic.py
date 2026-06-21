@@ -127,14 +127,6 @@ class SchedulerSmokeTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(sched.timers.is_active(chat_id))
         sched.timers.cancel(chat_id)
 
-    def test_tick_intervals(self):
-        import scheduler as sched
-
-        self.assertEqual(sched._tick_interval(5), 1)
-        self.assertEqual(sched._tick_interval(20), 2)
-        self.assertEqual(sched._tick_interval(90), 5)
-        self.assertEqual(sched._tick_interval(200), 10)
-
 
 if __name__ == "__main__":
     result = unittest.main(verbosity=2, exit=False)

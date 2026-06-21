@@ -3,9 +3,26 @@
 from __future__ import annotations
 
 import html
+import random
 from typing import Optional
 
 SEP = "━━━━━━━━━━━━━━━━━━"
+
+_WINNER_QUOTES = (
+    "🔥 <b>{winner}</b> — абсолютный босс перебива! Никто не успел!",
+    "👑 Корона достаётся <b>{winner}</b>! GG всем остальным!",
+    "🎉 <b>{winner}</b> выстоял до конца — легендарный перебив!",
+    "⚡ <b>{winner}</b> был последним! Респект!",
+    "🏅 <b>{winner}</b> забирает трофей! Кто бросит вызов в следующий раз?",
+    "🐐 <b>{winner}</b> — GOAT этого раунда. Без комментариев.",
+    "💎 <b>{winner}</b> перебил всех и забрал победу. Красиво!",
+)
+
+_NO_BID_QUOTES = (
+    "Тишина в чате… Никто не решился перебить.",
+    "Раунд прошёл без ставок. Stars сэкономлены, азарт — нет 😅",
+    "Никто не рискнул. Новый раунд: <code>/bid start</code>",
+)
 
 
 def format_time(seconds: int) -> str:
@@ -132,6 +149,39 @@ def timer_countdown(seconds: int, total_sec: int, leader: Optional[str] = None) 
     )
 
 
+def timer_30_alert(remaining_sec: int, total_sec: int, leader: Optional[str] = None) -> str:
+    bar = progress_bar(remaining_sec, total_sec)
+    time_str = format_time(remaining_sec)
+    leader_line = f"\n\n👑 Лидирует: {leader}" if leader else ""
+    return card(
+        "⚠️ 30 секунд!",
+        f"Финишная прямая!\n\n"
+        f"<code>{bar}</code>  <b>{time_str}</b>{leader_line}\n\n"
+        "Ещё можно перебить за ⭐ — успей!",
+    )
+
+
+def countdown_chat(seconds: int, leader: Optional[str] = None) -> str:
+    emoji = countdown_emoji(seconds) or str(seconds)
+    leader_line = f"\n👑 {leader}" if leader else ""
+    return f"{emoji}  <b>{seconds}</b>{leader_line}"
+
+
+def winner_announcement(winner: str) -> str:
+    quote = random.choice(_WINNER_QUOTES).format(winner=winner)
+    return card(
+        "🏆 Победитель раунда!",
+        f"{quote}\n\n"
+        f"🎊 Поздравляем {winner}!\n"
+        f"Новый раунд: <code>/bid start</code>",
+    )
+
+
+def winner_no_bid_announcement() -> str:
+    quote = random.choice(_NO_BID_QUOTES)
+    return card("🏁 Время вышло", quote)
+
+
 def timer_finished() -> str:
     return card("🏁 Время вышло", "Подводим итоги…")
 
@@ -167,20 +217,11 @@ def bid_reset(
 
 
 def winner_with_bid(winner: str) -> str:
-    return card(
-        "🏆 Победитель",
-        f"{winner}\n\n"
-        "Последний перебив забирает победу.\n"
-        "Таймер остановлен.",
-    )
+    return winner_announcement(winner)
 
 
 def winner_no_bid() -> str:
-    return card(
-        "Раунд завершён",
-        "Ставок не было.\n"
-        "Запустите новый раунд: <code>/bid start</code>",
-    )
+    return winner_no_bid_announcement()
 
 
 def stars_required() -> str:

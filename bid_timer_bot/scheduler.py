@@ -8,7 +8,7 @@ import logging
 import time
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Dict, Optional, Set
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
@@ -51,65 +51,26 @@ timers = ChatTimers()
 
 def _status_text(remaining: int, total: int, state: db.ChatState) -> str:
     leader = _winner_label(state) if state.last_bid_user_id else None
-    if remaining <= 10:
-        return phrases.timer_countdown(remaining, total, leader)
     return phrases.timer_tick(remaining, total, leader)
 
 
-async def _edit_message(bot: Bot, chat_id: int, message_id: int, text: str) -> None:
+async def _edit_status(bot: Bot, chat_id: int, message_id: int, text: str) -> None:
     try:
         await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id)
     except TelegramBadRequest as e:
         err_msg = str(e).lower()
         if "message is not modified" in err_msg:
             return
-        if "message to edit not found" in err_msg or "message is not found" in err_msg or "chat not found" in err_msg:
-            try:
-                msg = await bot.send_message(chat_id, text, disable_web_page_preview=True)
-                await db.update_chat_state(chat_id, status_message_id=msg.message_id)
-            except Exception:
-                log.debug("Failed to send replacement status message chat=%s", chat_id, exc_info=True)
-        else:
-            log.debug("Message edit skipped chat=%s: %s", chat_id, e)
+        log.debug("Status edit skipped chat=%s: %s", chat_id, e)
     except Exception:
-        log.debug("Message edit failed chat=%s", chat_id, exc_info=True)
-
-
-async def _edit_status(bot: Bot, chat_id: int, message_id: int, text: str) -> None:
-    await _edit_message(bot, chat_id, message_id, text)
-
-
-async def _refresh_bid_panel(
-    bot: Bot,
-    chat_id: int,
-    state: db.ChatState,
-    remaining: int,
-    total_sec: int,
-) -> None:
-    if not state.last_bid_message_id or not state.last_bid_user_id:
-        return
-    leader = _winner_label(state)
-    text = phrases.bid_leader_tick(leader, remaining, total_sec)
-    try:
-        await bot.edit_message_text(
-            text,
-            chat_id=chat_id,
-            message_id=state.last_bid_message_id,
-            disable_web_page_preview=True,
-        )
-    except TelegramBadRequest as e:
-        if "message is not modified" not in str(e).lower():
-            log.debug("Bid panel tick skipped chat=%s: %s", chat_id, e)
-    except Exception:
-        log.debug("Bid panel tick failed chat=%s", chat_id, exc_info=True)
+        log.debug("Status edit failed chat=%s", chat_id, exc_info=True)
 
 
 async def _send_or_refresh_status(bot: Bot, chat_id: int, text: str) -> int:
     state = await db.get_chat_state(chat_id)
     if state.status_message_id:
         await _edit_status(bot, chat_id, state.status_message_id, text)
-        updated_state = await db.get_chat_state(chat_id)
-        return updated_state.status_message_id or state.status_message_id
+        return state.status_message_id
     msg = await bot.send_message(chat_id, text, disable_web_page_preview=True)
     await db.update_chat_state(chat_id, status_message_id=msg.message_id)
     return msg.message_id
@@ -122,10 +83,15 @@ async def _finish_round(bot: Bot, chat_id: int, state: db.ChatState) -> None:
         is_running=False,
         clear_last_bid_message=False,
     )
-    if state.status_message_id:
-        await _edit_status(bot, chat_id, state.status_message_id, final_text)
-    else:
+    try:
         await bot.send_message(chat_id, final_text, disable_web_page_preview=True)
+        log.info(
+            "Round finished chat=%s winner=%s",
+            chat_id,
+            state.last_bid_user_id or "none",
+        )
+    except Exception:
+        log.exception("Failed to send winner message chat=%s", chat_id)
 
 
 async def update_status_now(bot: Bot, chat_id: int, end_at_unix: int, total_sec: int) -> None:
@@ -139,7 +105,6 @@ async def update_status_now(bot: Bot, chat_id: int, end_at_unix: int, total_sec:
         state.status_message_id,
         _status_text(remaining, total_sec, state),
     )
-    await _refresh_bid_panel(bot, chat_id, state, remaining, total_sec)
 
 
 async def arm_timer(bot: Bot, chat_id: int) -> None:
@@ -203,23 +168,44 @@ def _winner_label(state: db.ChatState) -> str:
 
 def _winner_message(state: db.ChatState) -> str:
     if state.last_bid_user_id:
-        return phrases.winner_with_bid(_winner_label(state))
-    return phrases.winner_no_bid()
+        return phrases.winner_announcement(_winner_label(state))
+    return phrases.winner_no_bid_announcement()
 
 
-def _tick_interval(remaining: int) -> int:
-    if remaining <= 10:
-        return 1
-    if remaining <= 30:
-        return 2
-    if remaining <= 120:
-        return 5
-    return 10
+async def _send_30_alert(
+    bot: Bot,
+    chat_id: int,
+    remaining: int,
+    total_sec: int,
+    leader: Optional[str],
+) -> None:
+    try:
+        await bot.send_message(
+            chat_id,
+            phrases.timer_30_alert(remaining, total_sec, leader),
+            disable_web_page_preview=True,
+        )
+    except Exception:
+        log.exception("Failed to send 30s alert chat=%s", chat_id)
+
+
+async def _send_countdown(bot: Bot, chat_id: int, seconds: int, leader: Optional[str]) -> None:
+    try:
+        await bot.send_message(
+            chat_id,
+            phrases.countdown_chat(seconds, leader),
+            disable_web_page_preview=True,
+        )
+    except Exception:
+        log.exception("Failed to send countdown chat=%s sec=%s", chat_id, seconds)
 
 
 async def run_timer(bot: Bot, chat_id: int, end_at_unix: int, total_sec: int) -> None:
+    """Таймер: без частых edit — новое сообщение на 30 сек и отсчёт 10→1 в чат."""
+    sent_30 = False
+    sent_countdown: Set[int] = set()
+
     try:
-        last_tick = 0
         while True:
             now = int(time.time())
             state = await db.get_chat_state(chat_id)
@@ -232,19 +218,23 @@ async def run_timer(bot: Bot, chat_id: int, end_at_unix: int, total_sec: int) ->
             if remaining <= 0:
                 break
 
-            interval = _tick_interval(remaining)
-            if now - last_tick >= interval:
-                if state.status_message_id:
-                    await _edit_status(
-                        bot,
-                        chat_id,
-                        state.status_message_id,
-                        _status_text(remaining, total_sec, state),
-                    )
-                await _refresh_bid_panel(bot, chat_id, state, remaining, total_sec)
-                last_tick = now
+            leader = _winner_label(state) if state.last_bid_user_id else None
 
-            await asyncio.sleep(1 if remaining <= 10 else min(2, remaining))
+            if remaining <= 10:
+                if remaining not in sent_countdown:
+                    sent_countdown.add(remaining)
+                    await _send_countdown(bot, chat_id, remaining, leader)
+                await asyncio.sleep(1)
+                continue
+
+            if remaining <= 30 and not sent_30:
+                sent_30 = True
+                await _send_30_alert(bot, chat_id, remaining, total_sec, leader)
+                await asyncio.sleep(1)
+                continue
+
+            sleep_for = min(remaining - 30, 5)
+            await asyncio.sleep(max(1, sleep_for))
 
         async with chat_locks[chat_id]:
             state = await db.get_chat_state(chat_id)
