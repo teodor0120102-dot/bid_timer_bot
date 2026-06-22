@@ -66,18 +66,7 @@ def _state_bidder_mention(state: db.ChatState) -> Optional[str]:
 
 
 async def _edit_or_send_bid_panel(message: Message, state: db.ChatState, text: str) -> int:
-    if state.last_bid_message_id:
-        try:
-            await message.bot.edit_message_text(
-                text,
-                chat_id=message.chat.id,
-                message_id=state.last_bid_message_id,
-                disable_web_page_preview=True,
-            )
-            return state.last_bid_message_id
-        except Exception:
-            log.debug("Bid panel edit failed chat=%s msg=%s", message.chat.id, state.last_bid_message_id)
-
+    """Всегда создаёт НОВОЕ сообщение о ставке (перебиве), не редактирует старое."""
     msg = await message.answer(text, disable_web_page_preview=True)
     return msg.message_id
 
